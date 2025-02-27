@@ -1438,7 +1438,7 @@ struct task_struct {
 #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
 	unsigned int			kasan_depth;
 #endif
-
+	int ccwf_disable_count;
 #ifdef CONFIG_KCSAN
 	struct kcsan_ctx		kcsan_ctx;
 #ifdef CONFIG_TRACE_IRQFLAGS

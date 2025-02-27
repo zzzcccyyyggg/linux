@@ -97,6 +97,8 @@
 #include <linux/rodata_test.h>
 #include <linux/jump_label.h>
 #include <linux/kcsan.h>
+#include <linux/kccwf.h>
+int checker_start = 0;
 #include <linux/init_syscalls.h>
 #include <linux/stackdepot.h>
 #include <linux/randomize_kstack.h>

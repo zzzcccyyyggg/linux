@@ -23,6 +23,7 @@
 #include <linux/seq_file.h>
 #include <linux/kasan.h>
 #include <linux/kmsan.h>
+#include <linux/kccwf.h>
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
 #include <linux/mempolicy.h>
@@ -2284,9 +2285,11 @@ bool slab_free_hook(struct kmem_cache *s, void *x, bool init,
 		debug_check_no_obj_freed(x, s->object_size);
 
 	/* Use KCSAN to help debug racy use-after-free. */
-	if (!still_accessible)
+	if (!still_accessible){
+		rec_mem_access(x, 0, 1, 0,s->object_size);
 		__kcsan_check_access(x, s->object_size,
-				     KCSAN_ACCESS_WRITE | KCSAN_ACCESS_ASSERT);
+			KCSAN_ACCESS_WRITE | KCSAN_ACCESS_ASSERT);
+	}
 
 	if (kfence_free(x))
 		return false;
