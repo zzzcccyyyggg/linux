@@ -22,7 +22,7 @@
 #define VALUE_CHANGED_FALSE 0
 #define VALUE_CHANGED_TRUE 1
 
-#define DELAY_PROBABILITY 20
+#define DELAY_PROBABILITY 5
 
 
 extern delay_var_t global_sync_delay[2];

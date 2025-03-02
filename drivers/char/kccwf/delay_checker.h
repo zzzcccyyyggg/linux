@@ -33,6 +33,7 @@
 #define START_CHECKER _IO(DEV_MAGIC, 10)
 #define STOP_LOG _IO(DEV_MAGIC, 11)
 #define CLEAN_LOG _IO(DEV_MAGIC, 12)
+#define START_MONITOR _IO(DEV_MAGIC, 13)
 
 #define DEVICE_NAME "checker_monitor"
 #define CLASS_NAME "checker_class"

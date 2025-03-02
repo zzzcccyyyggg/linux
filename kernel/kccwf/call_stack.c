@@ -17,11 +17,11 @@ __u64 FNV1a_Hash_Ulong(unsigned long value) {
 
     return hash;
 }
-
+// [Fix ME!] This function may cause dead lock
 void rec_func_enter(unsigned long func_name, int func_line) {
 	// printk(KERN_INFO "[KERNEL_MONITOR] rec_func_enter: %lu, %d\n", func_name, func_line);
 	// pid_t tid = get_thread_id();
-	if (!checker_start || current->ccwf_disable_count) {
+	if (checker_start != KCCWF_FUZZ_MODE || current->ccwf_disable_count) {
 		return;
     }
     pid_t tid = current->pid;
@@ -84,7 +84,7 @@ void print_call_stack(void) {
 }
 
 void rec_func_exit(unsigned long func_name, int func_line) {
-	if (!checker_start || current->ccwf_disable_count) {
+	if (checker_start != KCCWF_FUZZ_MODE || current->ccwf_disable_count) {
 		return;
     }
     // pid_t tid = get_thread_id();

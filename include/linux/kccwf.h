@@ -2,7 +2,8 @@
 #ifdef CONFIG_KCCWF
 #include <linux/types.h>
 #define MAX_LOG_ENTRIES 6553600 // 维持原条目数
-
+#define KCCWF_MONITOR_MODE 2
+#define KCCWF_FUZZ_MODE 1
 typedef struct delay_var
 {
     unsigned long var_name;

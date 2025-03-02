@@ -128,9 +128,10 @@ int is_stack_pointer(unsigned long addr) {
 }
 
 void rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type) {
-	if (!checker_start) {
-		return;
+    if (!checker_start) {
+        return;
     }
+    // printk(KERN_INFO "rec_mem_access\n");
     // fix me 
     if (!addr){
         return;
@@ -170,7 +171,11 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name, int is_wr
         delay_time = 0;
     } else if(random_delay_logging_phase) {
         if(get_random_u32_below(100) < DELAY_PROBABILITY){
-            delay_time = get_random_u32_below(80);
+            if (is_write) {
+                delay_time = get_random_u32_below(20);
+            } else {
+                delay_time = get_random_u32_below(10);
+            }
         }else{
             delay_time = 0;
         }
@@ -190,12 +195,16 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name, int is_wr
     };
 
     if(stable_logging_phase || random_delay_logging_phase) {
-        log_access_info(&var_access_info);
+        if (checker_start == KCCWF_FUZZ_MODE) {
+            log_access_info(&var_access_info);
+        }
     } else if(checking_sync_phase) {
         delay_time = in_race_pair(var_access_info);
         if(delay_time != -1) {
             // the race variable happens first, so delay the access
-            log_access_info(&var_access_info);
+            if (checker_start == KCCWF_FUZZ_MODE) {
+                log_access_info(&var_access_info);
+            }
         } else {
             return;
         }

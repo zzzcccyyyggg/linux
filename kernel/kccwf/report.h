@@ -74,7 +74,7 @@ void name##_report_race(const volatile void *addr, int is_write, int watchpoint_
         return;                                                                                         \
     }                                                                                                   \
                                                                                                         \
-    printk(KERN_INFO "%s", report_type);                                             \
+    printk(KERN_INFO "Kernel panic: %s", report_type);                                             \
     printk(KERN_INFO "VarName %llu, BlockLineNumber %d, IrLineNumber %d, is write %d\n",               \
            func_name, ((file_line >> 16) & 0xffff), (file_line & 0xffff), is_write);                    \
     for (unwind_start(&state, task, NULL, NULL); !unwind_done(&state); unwind_next_frame(&state)) {     \

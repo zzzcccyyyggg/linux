@@ -1,7 +1,7 @@
 #include "delay_checker.h"
 
 int stable_logging_phase = 0;
-int random_delay_logging_phase = 0;
+int random_delay_logging_phase = 1;
 int checking_sync_phase = 0;
 int validating_phase = 0;
 delay_var_t global_sync_delay[2];
@@ -29,6 +29,10 @@ static long checker_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 		    printk(KERN_INFO
 			   "[CHECKER_MONITOR] checker_monitor: START_CHECKER\n");
 		    checker_start = 1;
+            break;
+        case START_MONITOR:
+            printk(KERN_INFO "[CHECKER_MONITOR] checker_monitor: START_MONITOR\n");
+            checker_start = KCCWF_MONITOR_MODE;
             break;
         case START_STABLE_LOGGING:
             printk(KERN_INFO "[CHECKER_MONITOR] checker_monitor: START_STABLE_LOGGING\n");
@@ -168,7 +172,7 @@ static int __init checker_init(void) {
         unregister_chrdev_region(dev, 1);
         return PTR_ERR(checker_device);
     }
-
+    // checker_start = KCCWF_MONITOR_MODE;
     printk(KERN_INFO "[CHECKER_MONITOR] checker_monitor: Checker module loaded\n");
     return 0;
 }
