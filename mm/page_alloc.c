@@ -1056,7 +1056,8 @@ __always_inline bool free_pages_prepare(struct page *page,
 	trace_mm_page_free(page, order);
 	kmsan_free_page(page, order);
 	void *addr = page_address(page);
-	rec_mem_access(addr, 0, 1, 0, PAGE_SIZE << order);
+	if(current->kccwf_free_enable_count)
+		rec_mem_access(addr, 0, 1, 0, PAGE_SIZE << order);
 	if (memcg_kmem_online() && PageMemcgKmem(page))
 		__memcg_kmem_uncharge_page(page, order);
 

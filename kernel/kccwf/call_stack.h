@@ -7,20 +7,21 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
+#include <linux/hashtable.h>
 #include "utils.h"
 
 typedef struct func_call {
     unsigned long func_name;
     int func_line;
+    /* The hash of the current thread's call stack when this function is called */
     __u64 func_call_stack_hash;
-
     struct list_head list;
-} func_call_t;
+} func_call_t; 
 
 typedef struct thread_chain {
     int tid;
+    /* The current hasd of the call stack of this thread */
     __u64 thread_call_stack_hash;
-
     struct list_head func_calls;
     struct list_head list;
 } thread_chain_t;

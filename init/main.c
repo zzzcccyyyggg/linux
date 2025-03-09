@@ -98,7 +98,7 @@
 #include <linux/jump_label.h>
 #include <linux/kcsan.h>
 #include <linux/kccwf.h>
-int checker_start = 0;
+int kccwf_mode = KCCWF_DISABLE_MODE;
 #include <linux/init_syscalls.h>
 #include <linux/stackdepot.h>
 #include <linux/randomize_kstack.h>

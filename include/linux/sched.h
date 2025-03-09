@@ -48,6 +48,7 @@
 #include <linux/uidgid_types.h>
 #include <asm/kmap_size.h>
 
+// #include <linux/kccwf.h>
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct bio_list;
@@ -1438,7 +1439,8 @@ struct task_struct {
 #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
 	unsigned int			kasan_depth;
 #endif
-	int ccwf_disable_count;
+	int kccwf_disable_count;
+	int kccwf_free_enable_count;
 #ifdef CONFIG_KCSAN
 	struct kcsan_ctx		kcsan_ctx;
 #ifdef CONFIG_TRACE_IRQFLAGS

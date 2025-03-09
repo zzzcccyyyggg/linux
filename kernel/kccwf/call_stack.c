@@ -18,18 +18,22 @@ __u64 FNV1a_Hash_Ulong(unsigned long value) {
     return hash;
 }
 // [Fix ME!] This function may cause dead lock
-void rec_func_enter(unsigned long func_name, int func_line) {
+/*
+若是函数在中间处退出 则会导致其tid未被删除 导致tid不断累积 导致遍历时耗时较长
+并且funcline无用可以删除 可以添加上函数真名
+由于rec_mem_access 中调用了 get_current_thread_hash 故还是需要改进这里 至少需要改进查找效率
+*/
+void rec_func_enter(unsigned long func_name,char func_line) {
 	// printk(KERN_INFO "[KERNEL_MONITOR] rec_func_enter: %lu, %d\n", func_name, func_line);
 	// pid_t tid = get_thread_id();
-	if (checker_start != KCCWF_FUZZ_MODE || current->ccwf_disable_count) {
+	if (IS_MONITOR_ENABLED(kccwf_mode) || current->kccwf_disable_count) {
 		return;
     }
+    current->kccwf_disable_count++;
     pid_t tid = current->pid;
-
     bool new_thread = true;
     thread_chain_t *tc;
     __u64 hash_1, hash_2;
-
     func_call_t *fc = (func_call_t *)kzalloc(sizeof(func_call_t), GFP_ATOMIC);
     if (!fc) {
         printk(KERN_WARNING "[KERNEL_MONITOR] kernel_monitor: can't allocate memory\n");
@@ -40,24 +44,22 @@ void rec_func_enter(unsigned long func_name, int func_line) {
 
     /* check if is new thread */
     spin_lock_irqsave(&thread_chain_lock, thread_chain_lock_flags);
-    list_for_each_entry(tc, &global_thread_chain_head, list) {
+    list_for_each_entry_reverse(tc, &global_thread_chain_head, list) {
         if (tc->tid == tid) {
-            new_thread = false;
-            break;
+            new_thread = 1;
+            goto found;
         }
     }
+    tc = (thread_chain_t *)kzalloc(sizeof(thread_chain_t), GFP_ATOMIC);
+    if (!tc) {
+        printk(KERN_WARNING "[KERNEL_MONITOR] kernel_monitor: can't allocate memory\n");
+        return;
+    }
+    tc->tid = tid;
+    INIT_LIST_HEAD(&tc->func_calls);
+    list_add_tail(&tc->list, &global_thread_chain_head);
 
-    if(new_thread) {
-        tc = (thread_chain_t *)kzalloc(sizeof(thread_chain_t), GFP_ATOMIC);
-        if (!tc) {
-            printk(KERN_WARNING "[KERNEL_MONITOR] kernel_monitor: can't allocate memory\n");
-            return;
-        }
-        tc->tid = tid;
-        INIT_LIST_HEAD(&tc->func_calls);
-        list_add_tail(&tc->list, &global_thread_chain_head);
-    }
-    
+found:
     list_add_tail(&fc->list, &tc->func_calls);
     if(new_thread) {
         hash_1 = FNV1a_Hash_Ulong(func_name+func_line);
@@ -67,6 +69,7 @@ void rec_func_enter(unsigned long func_name, int func_line) {
     fc->func_call_stack_hash = hash_1;
     tc->thread_call_stack_hash = hash_1;
     spin_unlock_irqrestore(&thread_chain_lock, thread_chain_lock_flags);
+    current->kccwf_disable_count--;
 }
 EXPORT_SYMBOL(rec_func_enter);
 
@@ -84,10 +87,10 @@ void print_call_stack(void) {
 }
 
 void rec_func_exit(unsigned long func_name, int func_line) {
-	if (checker_start != KCCWF_FUZZ_MODE || current->ccwf_disable_count) {
+	if (kccwf_mode != IS_MONITOR_ENABLED(kccwf_mode) || current->kccwf_disable_count) {
 		return;
     }
-    // pid_t tid = get_thread_id();
+    current->kccwf_disable_count++;
     pid_t tid = current->pid;
     thread_chain_t *tc, *tmp_tc, *tc_to_free = NULL;
     func_call_t *fc, *tmp_fc, *fc_to_free = NULL;
@@ -117,16 +120,13 @@ void rec_func_exit(unsigned long func_name, int func_line) {
         // print_call_stack();
     }
     if(fc_to_free) {
-        current->ccwf_disable_count++;
         kfree(fc_to_free);
-        current->ccwf_disable_count--;
     }
     if(tc_to_free) {
-        current->ccwf_disable_count++;
         kfree(tc_to_free);
-        current->ccwf_disable_count--;
     }
     spin_unlock_irqrestore(&thread_chain_lock, thread_chain_lock_flags);
+    current->kccwf_disable_count--;
 
 }
 EXPORT_SYMBOL(rec_func_exit);

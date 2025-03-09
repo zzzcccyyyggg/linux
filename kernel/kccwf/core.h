@@ -25,9 +25,6 @@
 #define DELAY_PROBABILITY 5
 
 
-extern delay_var_t global_sync_delay[2];
-extern delay_var_t global_validate_delay[2];
-
 extern int stable_logging_phase;
 extern int random_delay_logging_phase;
 extern int checking_sync_phase;
@@ -38,19 +35,19 @@ extern int checker_start;
 #define PTR_TO_LONG(ptr) ((long)(unsigned long)(ptr))
 
 #define DEFINE_FIND_WATCHPOINT_FUNCTION(name, watchpoints_array)                                \
-    static __always_inline atomic_long_t *name(access_info_t var_access_info, long *found_addr) \
+    static __always_inline atomic_long_t *name(access_info_t *var_access_info, long *found_addr) \
     {                                                                                           \
         atomic_long_t *watchpoint;                                                              \
         for (int i = 0; i < MAX_WATCHPOINTS; i++)                                               \
         {                                                                                       \
             watchpoint = &watchpoints_array[i];                                                 \
-            long temp = (long)(var_access_info.var_addr);                                     \
+            long temp = (long)(var_access_info->var_addr);                                     \
             long addr = atomic_long_read(watchpoint); \
             if(addr == temp){ \
                 if(atomic_long_try_cmpxchg(watchpoint, &temp, CONSUMED_VALUE)  )           \
                 {                                                                                   \
-                    *found_addr = (long)var_access_info.var_addr;                                         \
-                    printk(KERN_INFO "var addr %lu",(long)var_access_info.var_addr);\
+                    *found_addr = (long)var_access_info->var_addr;                                         \
+                    printk(KERN_INFO "var addr %lu",(long)var_access_info->var_addr);\
                     return watchpoint;                                                              \
                 }}                                                                                   \
         }                                                                                       \
@@ -82,39 +79,39 @@ extern int checker_start;
     }
 
 #define DEFINE_SETUP_WATCHPOINT_FUNCTION(name, watchpoints_array)                                                    \
-    static void setup_##name##_watchpoint(access_info_t var_access_info)                                             \
+    static void setup_##name##_watchpoint(access_info_t *var_access_info)                                             \
     {                                                                                                                \
         u64 old, new, diff;                                                                                          \
         atomic_long_t *watchpoint;                                                                                   \
         int value_change = VALUE_CHANGED_FALSE;                                                                      \
         long expect_val = PROCESS_VALUE;                                                                             \
                                                                                                                      \
-        watchpoint = insert_##name##_watchpoint((unsigned long)var_access_info.var_addr);  \
+        watchpoint = insert_##name##_watchpoint((unsigned long)var_access_info->var_addr);  \
         if (!watchpoint)                                                                                             \
         {                                                                                                            \
             printk(KERN_INFO "No watchpoint available\n");                                                           \
             return;                                                                                                  \
         }                                                                                                            \
                                                                                                                       \
-        set_##name##_report_info(var_access_info.var_addr, var_access_info.is_write, watchpoint - watchpoints_array, \
-                                 var_access_info.file_line,var_access_info.var_name);                                                         \
-        if(!atomic_long_try_cmpxchg_relaxed(watchpoint, &expect_val, (unsigned long)var_access_info.var_addr)){         \
+        set_##name##_report_info(var_access_info->var_addr, var_access_info->is_write, watchpoint - watchpoints_array, \
+                                 var_access_info->file_line,var_access_info->var_name);                                                         \
+        if(!atomic_long_try_cmpxchg_relaxed(watchpoint, &expect_val, (unsigned long)var_access_info->var_addr)){         \
             clear_##name##_report_info(watchpoint - watchpoints_array);                                              \
             remove_watchpoint(watchpoint);                                                                           \
             return;\
         }\
                                                                                                                      \
-        int delay_time = var_access_info.delay_time;                                                                 \
+        int delay_time = var_access_info->delay_time;                                                                 \
         while (delay_time >= 2000)                                                                                   \
         {                                                                                                            \
             udelay(2000);                                                                                            \
             delay_time -= 2000;                                                                                      \
         }                                                                                                            \
         udelay(delay_time);                                                                                          \
-        unsigned long temp = (unsigned long)var_access_info.var_addr;        \
+        unsigned long temp = (unsigned long)var_access_info->var_addr;        \
         if (atomic_long_try_cmpxchg_relaxed(watchpoint, &temp, CONSUMED_VALUE))                               \
         {                                                                                                            \
-            if (var_access_info.var_name == 17713640239220804443UL){\
+            if (var_access_info->var_name == 17713640239220804443UL){\
                 printk(KERN_INFO "watchpoint number %d\n",(watchpoint-watchpoints_array));\
             }\
             clear_##name##_report_info(watchpoint - watchpoints_array);                                              \
@@ -123,11 +120,11 @@ extern int checker_start;
 }                                                                                                                    \
 
 #define DEFINE_FOUND_WATCHPOINT_FUNCTION(name, watchpoints_array)                                                    \
-    static void found_##name##_watchpoint(access_info_t var_access_info, atomic_long_t *watchpoint, long found_addr) \
+    static void found_##name##_watchpoint(access_info_t *var_access_info, atomic_long_t *watchpoint, long found_addr) \
     {                                                                                                                \
-            name##_report_race(var_access_info.var_addr, var_access_info.is_write,                                   \
-                                watchpoint - watchpoints_array, var_access_info.var_name,                             \
-                                var_access_info.file_line);                                                           \
+            name##_report_race(var_access_info->var_addr, var_access_info->is_write,                                   \
+                                watchpoint - watchpoints_array, var_access_info->var_name,                             \
+                                var_access_info->file_line);                                                           \
             printk(KERN_INFO "Found watch_point %d\n",watchpoint - watchpoints_array);                  \
             clear_##name##_report_info(watchpoint - watchpoints_array);                                              \
             remove_watchpoint(watchpoint);                                                                           \
