@@ -28,10 +28,12 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 
 	switch (cmd) {
 	case CLEAN_LOG:
+		// kccwf_log_file_clean = true;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: CLEAN_LOG\n");
 		break;
 	case STOP_LOG:
+		TURN_OFF_LOG(kccwf_mode);
 		_write_count = atomic_long_read(&kccwf_write_count);
 		_read_count = atomic_long_read(&kccwf_read_count);
 		_stack_count = atomic_long_read(&stack_count);

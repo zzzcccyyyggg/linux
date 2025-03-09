@@ -20,6 +20,10 @@
 #define IS_LOG_ENABLED(mode)        ((mode) & KCCWF_LOG_ENABLE)
 #define IS_RANDOM_ENABLED(mode)     ((mode) & KCCWF_RANDOM_ENABLE)
 
+#define TURN_OFF_LOG(mode)        ((mode) &= ~KCCWF_LOG_ENABLE)
+#define TURN_OFF_MONITOR(mode)    ((mode) &= ~KCCWF_MONITOR_ENABLE)
+#define TURN_OFF_RANDOM(mode)     ((mode) &= ~KCCWF_RANDOM_ENABLE)
+
 typedef struct delay_var
 {
     unsigned long var_name;
@@ -80,7 +84,7 @@ extern atomic_t overflow_count;
 extern struct file *log_file;
 
 extern struct task_struct *bg_thread;
-
+extern bool kccwf_log_file_clean;
 extern int is_log_init;
 int flush_logs(void *arg);
 void log_access_info(const access_info_t *var_access_info);

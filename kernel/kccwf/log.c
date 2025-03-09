@@ -58,7 +58,7 @@ void clean_log(void) {
 int flush_logs(void *arg) {
     current->kccwf_disable_count++;
     int cpu;
-    loff_t pos = 0;
+    loff_t kccwf_log_file_pos = 0;
 
     while (!kthread_should_stop()) {
         for_each_online_cpu(cpu) {
@@ -82,11 +82,11 @@ int flush_logs(void *arg) {
             // 分块写入
             int first_chunk = (saved_head > saved_tail) ? entries_to_read : (MAX_LOG_ENTRIES - saved_tail);
             if (first_chunk > 0) {
-                kernel_write(log_file, &buffer[saved_tail], first_chunk * sizeof(access_info_t), &pos);
+                kernel_write(log_file, &buffer[saved_tail], first_chunk * sizeof(access_info_t), &kccwf_log_file_pos);
             }
             if (entries_to_read > first_chunk) {
                 int second_chunk = entries_to_read - first_chunk;
-                kernel_write(log_file, buffer, second_chunk * sizeof(access_info_t), &pos);
+                kernel_write(log_file, buffer, second_chunk * sizeof(access_info_t), &kccwf_log_file_pos);
             }
 
             // 原子更新tail到当前head位置

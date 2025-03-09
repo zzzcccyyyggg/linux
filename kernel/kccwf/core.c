@@ -74,12 +74,6 @@ unsigned long get_current_thread_hash(pid_t tid)
 	return hash;
 }
 
-// static void log_access_info(const access_info_t *var_access_info)
-// {
-//     trace_printk("Access info:  %p,  %d,  %lu,  %d,  %d,  %lu,  %d,  %lu,  %d,  %d\n",
-//                  var_access_info->var_addr, var_access_info->is_write, var_access_info->var_name, var_access_info->file_line, var_access_info->type, var_access_info->access_time, var_access_info->tid, var_access_info->call_stack_hash, var_access_info->delay_time, var_access_info->is_skip);
-// }
-
 static int in_race_pair(access_info_t var_access_info)
 {
 	if (global_sync_delay[0].var_name == var_access_info.var_name &&
@@ -245,16 +239,8 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 
 	if (IS_LOG_ENABLED(kccwf_mode)) {
 		// printk(KERN_INFO "[KERNEL_MONITOR] LOG\n");
-		// log_access_info_ftrace(&var_access_info);
-		log_access_info(&var_access_info);
-	} else if (checking_sync_phase) {
-		delay_time = in_race_pair(var_access_info);
-		if (delay_time != -1) {
-			// log_access_info_ftrace(&var_access_info);
-			log_access_info(&var_access_info);
-		} else {
-			return;
-		}
+		log_access_info_ftrace(&var_access_info);
+		// log_access_info(&var_access_info);
 	}
 
 	atomic_long_t *watchpoint;
