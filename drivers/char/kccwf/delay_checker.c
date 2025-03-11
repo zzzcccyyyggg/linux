@@ -1,5 +1,4 @@
 #include "delay_checker.h"
-#include "linux/atomic/atomic-instrumented.h"
 #include "linux/printk.h"
 #include "linux/stddef.h"
 
@@ -34,16 +33,20 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case STOP_LOG:
 		TURN_OFF_LOG(kccwf_mode);
-		_write_count = atomic_long_read(&kccwf_write_count);
-		_read_count = atomic_long_read(&kccwf_read_count);
-		_stack_count = atomic_long_read(&stack_count);
-		_heap_count = atomic_long_read(&heap_count);
-		printk(KERN_INFO "[CHECKER_MONITOR] The write point access: %ld, the read point access %ld\n",_write_count,_read_count);
-		printk(KERN_INFO "[CHECKER_MONITOR] Stack count: %ld, Heap count %ld\n",_stack_count,_heap_count);
-		atomic_long_set(&kccwf_write_count, 0);
-		atomic_long_set(&kccwf_read_count, 0);
-		atomic_long_set(&stack_count, 0);
-		atomic_long_set(&heap_count, 0);
+		if (KCCWF_DEBUG) {
+			_write_count = atomic_long_read(&kccwf_write_count);
+			_read_count = atomic_long_read(&kccwf_read_count);
+			_stack_count = atomic_long_read(&stack_count);
+			_heap_count = atomic_long_read(&heap_count);
+			printk(KERN_INFO "[CHECKER_MONITOR] The write point access: %ld, the read point access %ld\n",_write_count,_read_count);
+			printk(KERN_INFO "[CHECKER_MONITOR] Stack count: %ld, Heap count %ld\n",_stack_count,_heap_count);
+			atomic_long_set(&kccwf_write_count, 0);
+			atomic_long_set(&kccwf_read_count, 0);
+			atomic_long_set(&stack_count, 0);
+			atomic_long_set(&heap_count, 0);
+		}
+		printk(KERN_INFO
+		       "[CHECKER_MONITOR] checker_monitor: STOP LOG\n");
 		break;
 	case START_FUZZER:
 		printk(KERN_INFO
@@ -150,6 +153,68 @@ static const struct file_operations checker_fops = {
 	.unlocked_ioctl = checker_ioctl,
 };
 
+#include <linux/ktime.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+// /proc文件接口
+static int proc_show_kccwf_stats(struct seq_file *m, void *v)
+{
+	seq_printf(m, "Condition Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_condition_check_total),
+		atomic_long_read(&count_condition_check),
+		atomic_long_read(&count_condition_check) ? 
+		atomic_long_read(&time_condition_check_total) / atomic_long_read(&count_condition_check) : 0);
+	
+	seq_printf(m, "Stack/Heap Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_stack_heap_total),
+		atomic_long_read(&count_stack_heap),
+		atomic_long_read(&count_stack_heap) ? 
+		atomic_long_read(&time_stack_heap_total) / atomic_long_read(&count_stack_heap) : 0);
+
+	seq_printf(m, "RW Counters:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_rw_counters_total),
+		atomic_long_read(&count_rw_counters),
+		atomic_long_read(&count_rw_counters) ? 
+		atomic_long_read(&time_rw_counters_total) / atomic_long_read(&count_rw_counters) : 0);
+
+	seq_printf(m, "Get Time/TID:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_get_time_tid_total),
+		atomic_long_read(&count_get_time_tid),
+		atomic_long_read(&count_get_time_tid) ? 
+		atomic_long_read(&time_get_time_tid_total) / atomic_long_read(&count_get_time_tid) : 0);
+
+	seq_printf(m, "Delay Calculation:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_delay_calculation_total),
+		atomic_long_read(&count_delay_calculation),
+		atomic_long_read(&count_delay_calculation) ? 
+		atomic_long_read(&time_delay_calculation_total) / atomic_long_read(&count_delay_calculation) : 0);
+
+	seq_printf(m, "Access Info Setup:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_access_info_setup_total),
+		atomic_long_read(&count_access_info_setup),
+		atomic_long_read(&count_access_info_setup) ? 
+		atomic_long_read(&time_access_info_setup_total) / atomic_long_read(&count_access_info_setup) : 0);
+
+	seq_printf(m, "Watchpoint Processing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_watchpoint_processing_total),
+		atomic_long_read(&count_watchpoint_processing),
+		atomic_long_read(&count_watchpoint_processing) ? 
+		atomic_long_read(&time_watchpoint_processing_total) / atomic_long_read(&count_watchpoint_processing) : 0);
+
+	return 0;
+}
+
+static int proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, proc_show_kccwf_stats, NULL);
+}
+
+static const struct proc_ops proc_fops = {
+    .proc_open = proc_open,       // 改为 proc_open 成员
+    .proc_read = seq_read,        // 改为 proc_read
+    .proc_lseek = seq_lseek,      // 改为 proc_lseek
+    .proc_release = single_release, // 改为 proc_release
+};
 static int __init checker_init(void)
 {
 	int result;
@@ -220,13 +285,14 @@ static int __init checker_init(void)
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module loaded\n");
 	// logger_init();
+	proc_create("kccwf_stats", 0, NULL, &proc_fops);
 	return 0;
 }
 
 static void __exit checker_exit(void)
 {
+	remove_proc_entry("kccwf_stats", NULL);
 	dev_t dev = MKDEV(mon_major, mon_minor);
-
 	device_destroy(checker_class,
 		       MKDEV(mon_major, mon_minor)); // 删除设备节点
 	class_destroy(checker_class); // 销毁设备类

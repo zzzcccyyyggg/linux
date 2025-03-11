@@ -1,9 +1,8 @@
 #include "core.h"
-#include "asm/current.h"
-#include "linux/export.h"
 
-static atomic_long_t read_watchpoints[MAX_WATCHPOINTS];
-static atomic_long_t write_watchpoints[MAX_WATCHPOINTS];
+static atomic_long_t read_watchpoints[REAL_NUM_WATCHPOINTS];
+static atomic_long_t write_watchpoints[REAL_NUM_WATCHPOINTS];
+
 static atomic_t may_race_pair_trigger_flag = ATOMIC_INIT(0);
 static atomic_t validate_race_pair_trigger_flag = ATOMIC_INIT(0);
 atomic_long_t kccwf_read_count = ATOMIC_INIT(0);
@@ -13,7 +12,7 @@ DEFINE_READ_INSTRUMENTED_MEMORY(8)
 DEFINE_READ_INSTRUMENTED_MEMORY(16)
 DEFINE_READ_INSTRUMENTED_MEMORY(32)
 DEFINE_READ_INSTRUMENTED_MEMORY(64)
-static u64 read_instrumented_memory(const volatile void *addr, int type)
+static __always_inline u64 read_instrumented_memory(const volatile void *addr, int type)
 {
 	switch ((type >> 28) & 0xf) {
 	case 1:
@@ -36,17 +35,17 @@ DEFINE_INSERT_WATCHPOINT_FUNCTION(insert_read_watchpoint, read_watchpoints)
 DEFINE_INSERT_WATCHPOINT_FUNCTION(insert_write_watchpoint, write_watchpoints)
 
 // 将其设置为 CONSUMED_VALUE 并返回其原来的值
-static long consume_watchpoint(atomic_long_t *watchpoint)
+static __always_inline long consume_watchpoint(atomic_long_t *watchpoint)
 {
 	return atomic_long_xchg_relaxed(watchpoint, CONSUMED_VALUE);
 }
 
-static void remove_watchpoint(atomic_long_t *watchpoint)
+static __always_inline void remove_watchpoint(atomic_long_t *watchpoint)
 {
 	atomic_long_set(watchpoint, INVALID_VALUE);
 }
 
-static bool try_consume_watchpoint(atomic_long_t *watchpoint, long found_addr)
+static __always_inline bool try_consume_watchpoint(atomic_long_t *watchpoint, long found_addr)
 {
 	return atomic_long_try_cmpxchg_relaxed(watchpoint, &found_addr,
 					       CONSUMED_VALUE);
@@ -74,55 +73,11 @@ unsigned long get_current_thread_hash(pid_t tid)
 	return hash;
 }
 
-static int in_race_pair(access_info_t var_access_info)
-{
-	if (global_sync_delay[0].var_name == var_access_info.var_name &&
-	    global_sync_delay[0].call_stack_hash ==
-		    var_access_info.call_stack_hash) {
-		// 会返回当前值
-		if (!atomic_cmpxchg(&may_race_pair_trigger_flag, 0, 1)) {
-			return global_sync_delay[0].delay_time;
-		}
-		return 0;
-	} else if (global_sync_delay[1].var_name == var_access_info.var_name &&
-		   global_sync_delay[1].call_stack_hash ==
-			   var_access_info.call_stack_hash) {
-		if (!atomic_cmpxchg(&may_race_pair_trigger_flag, 0, 1)) {
-			return global_sync_delay[1].delay_time;
-		}
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
-static int in_validate_pair(access_info_t var_access_info)
-{
-	if (global_validate_delay[0].var_name == var_access_info.var_name &&
-	    global_validate_delay[0].call_stack_hash ==
-		    var_access_info.call_stack_hash) {
-		if (!atomic_cmpxchg(&validate_race_pair_trigger_flag, 0, 1)) {
-			return global_sync_delay[0].delay_time;
-		}
-		return 0;
-	} else if (global_validate_delay[1].var_name ==
-			   var_access_info.var_name &&
-		   global_validate_delay[1].call_stack_hash ==
-			   var_access_info.call_stack_hash) {
-		if (!atomic_cmpxchg(&validate_race_pair_trigger_flag, 0, 1)) {
-			return global_sync_delay[1].delay_time;
-		}
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
 atomic_long_t heap_count;
 atomic_long_t stack_count;
 
 /* is the addr in stack */
-int is_stack_pointer(unsigned long addr)
+static __always_inline int is_stack_pointer(unsigned long addr)
 {
 	unsigned long irq_stack_start =
 		(unsigned long)per_cpu(pcpu_hot.hardirq_stack_ptr,
@@ -135,7 +90,7 @@ int is_stack_pointer(unsigned long addr)
 	       (addr >= stack_start && addr < stack_end);
 }
 /* if the var in the may_race pairs it will get the delay time of corresponding struct and if it has same context(call_stack) with the ,it will get the double delay time of this*/
-int get_delay_time(unsigned long target, unsigned long call_stack_hash)
+static __always_inline int get_delay_time(unsigned long target, unsigned long call_stack_hash)
 {
 	int left = 0;
 	int right = 255;
@@ -181,98 +136,159 @@ int get_delay_time(unsigned long target, unsigned long call_stack_hash)
 	return 0;
 }
 
-static void log_access_info_ftrace(const access_info_t *var_access_info)
+static __always_inline void log_access_info_ftrace(const access_info_t *var_access_info)
 {
     trace_printk("Access info:  %p,  %d,  %lu,  %d,  %d,  %lu,  %d,  %lu,  %d,  %d\n",
                  var_access_info->var_addr, var_access_info->is_write, var_access_info->var_name, var_access_info->file_line, var_access_info->type, var_access_info->access_time, var_access_info->tid, var_access_info->call_stack_hash, var_access_info->delay_time, var_access_info->is_skip);
 }
+// 定义统计变量
+atomic_long_t time_condition_check_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_stack_heap_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_rw_counters_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_get_time_tid_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_delay_calculation_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_access_info_setup_total = ATOMIC_LONG_INIT(0);
+atomic_long_t time_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
+
+atomic_long_t count_condition_check = ATOMIC_LONG_INIT(0);
+atomic_long_t count_stack_heap = ATOMIC_LONG_INIT(0);
+atomic_long_t count_rw_counters = ATOMIC_LONG_INIT(0);
+atomic_long_t count_get_time_tid = ATOMIC_LONG_INIT(0);
+atomic_long_t count_delay_calculation = ATOMIC_LONG_INIT(0);
+atomic_long_t count_access_info_setup = ATOMIC_LONG_INIT(0);
+atomic_long_t count_watchpoint_processing = ATOMIC_LONG_INIT(0);
 
 void rec_mem_access(const volatile void *addr, unsigned long var_name,
 		    int is_write, int file_line, int type)
 {
-	if (kccwf_mode == KCCWF_DISABLE_MODE || current->kccwf_disable_count) {
-		return;
-	}
+	ktime_t start, end;
+	u64 delta;
+
+	// 测量条件检查部分
+	// start = ktime_get();
+	// if (kccwf_mode == KCCWF_DISABLE_MODE || current->kccwf_disable_count) {
+	// 	// end = ktime_get();
+	// 	// delta = ktime_to_ns(ktime_sub(end, start));
+	// 	//atomic_long_add(delta, &time_condition_check_total);
+	// 	//atomic_long_inc(&count_condition_check);
+	// 	return;
+	// }
 	if (!addr) {
+		// end = ktime_get();
+		// delta = ktime_to_ns(ktime_sub(end, start));
+		//atomic_long_add(delta, &time_condition_check_total);
+		//atomic_long_inc(&count_condition_check);
 		return;
 	}
-	// printk(KERN_INFO "[KERNEL_MONITOR] REC\n");
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	//atomic_long_add(delta, &time_condition_check_total);
+	//atomic_long_inc(&count_condition_check);
+
+	// 测量栈/堆检查
+	// start = ktime_get();
 	if (is_stack_pointer((unsigned long)addr)) {
-		atomic_long_inc(&stack_count);
+		if (KCCWF_DEBUG)
+			atomic_long_inc(&stack_count);
 		return;
-	} else {
-		atomic_long_inc(&heap_count);
-	}
-	if (is_write){
-		atomic_long_inc(&kccwf_write_count);
 	}else {
-		atomic_long_inc(&kccwf_read_count);
+		if (KCCWF_DEBUG) atomic_long_inc(&heap_count);
 	}
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_stack_heap_total);
+	// atomic_long_inc(&count_stack_heap);
+
+	// 测量读写计数器
+	// start = ktime_get();
+	if (is_write) {
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_write_count);
+	} else {
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_read_count);
+	}
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_rw_counters_total);
+	// atomic_long_inc(&count_rw_counters);
+
+	// 测量获取时间和TID
+	// start = ktime_get();
 	ktime_t access_time = ktime_get();
 	pid_t tid = current->pid;
-	unsigned long call_stack_hash = get_current_thread_hash(tid);
+	unsigned long call_stack_hash = get_current_thread_hash(tid); // 简化示例
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_get_time_tid_total);
+	// atomic_long_inc(&count_get_time_tid);
+
+	// 测量延迟计算
+	// start = ktime_get();
 	int delay_time = get_delay_time(var_name, call_stack_hash);
 	if (!delay_time && IS_RANDOM_ENABLED(kccwf_mode)) {
-		if (get_random_u32_below(100) < DELAY_PROBABILITY) {
-			if (is_write) {
-				delay_time = get_random_u32_below(520);
-			} else {
-				delay_time = get_random_u32_below(52);
-			}
-		} else {
-			delay_time = 0;
+		if (get_random_u32_below(1000) < DELAY_PROBABILITY) {
+			delay_time = 80;
 		}
 	} else {
 		delay_time = 0;
 	}
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_delay_calculation_total);
+	// atomic_long_inc(&count_delay_calculation);
 
-	access_info_t var_access_info = { .is_write = is_write,
-					  .file_line = file_line,
-					  .var_name = var_name,
-					  .type = type,
-					  .var_addr = addr,
-					  .call_stack_hash = call_stack_hash,
-					  .access_time = access_time,
-					  .tid = tid,
-					  .delay_time = delay_time,
-					  .is_skip = 0 };
+	// 测量构造访问信息结构体
+	// start = ktime_get();
+	access_info_t var_access_info = { 
+		.is_write = is_write,
+		.file_line = file_line,
+		.var_name = var_name,
+		.type = type,
+		.var_addr = addr,
+		.call_stack_hash = call_stack_hash,
+		.access_time = access_time,
+		.tid = tid,
+		.delay_time = delay_time,
+		.is_skip = 0 
+	};
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_access_info_setup_total);
+	// atomic_long_inc(&count_access_info_setup);
 
+	// 测量观察点处理
+	// start = ktime_get();
 	if (IS_LOG_ENABLED(kccwf_mode)) {
-		// printk(KERN_INFO "[KERNEL_MONITOR] LOG\n");
-		log_access_info_ftrace(&var_access_info);
-		// log_access_info(&var_access_info);
+		log_access_info(&var_access_info);
 	}
-
 	atomic_long_t *watchpoint;
 	long found_addr;
 	if (is_write) {
-		watchpoint =
-			find_write_watchpoint(&var_access_info, &found_addr);
+		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
-			found_write_watchpoint(&var_access_info, watchpoint,
-					       found_addr);
+			found_write_watchpoint(&var_access_info, watchpoint, found_addr);
 		} else {
-			watchpoint = find_read_watchpoint(&var_access_info,
-							  &found_addr);
+			watchpoint = find_read_watchpoint(&var_access_info, &found_addr);
 			if (watchpoint) {
-				found_read_watchpoint(&var_access_info,
-						      watchpoint, found_addr);
+				found_read_watchpoint(&var_access_info, watchpoint, found_addr);
 			} else {
 				setup_write_watchpoint(&var_access_info);
 			}
 		}
 	} else {
-		watchpoint =
-			find_write_watchpoint(&var_access_info, &found_addr);
+		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
-			found_write_watchpoint(&var_access_info, watchpoint,
-					       found_addr);
+			found_write_watchpoint(&var_access_info, watchpoint, found_addr);
 		} else {
 			setup_read_watchpoint(&var_access_info);
 		}
 	}
+	// end = ktime_get();
+	// delta = ktime_to_ns(ktime_sub(end, start));
+	// atomic_long_add(delta, &time_watchpoint_processing_total);
+	// atomic_long_inc(&count_watchpoint_processing);
 }
 EXPORT_SYMBOL(rec_mem_access);
+
 void enable_kccwf_free_rec(void){
 	current->kccwf_free_enable_count++;
 }

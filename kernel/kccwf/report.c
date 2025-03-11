@@ -3,7 +3,7 @@
 bool check_reported(unsigned long name_1, int line_1, unsigned long name_2, int line_2) {
     unsigned long flags;
     raw_spin_lock_irqsave(&reported_lock, flags);
-    for (int i = 0; i < MAX_WATCHPOINTS; i++) {
+    for (int i = 0; i < REAL_NUM_WATCHPOINTS; i++) {
         if (((reported_funcs[i].name_1 == name_1 && reported_funcs[i].line_1 == line_1) && (reported_funcs[i].name_2 == name_2 && reported_funcs[i].line_2 == line_2)) \
               || ((reported_funcs[i].name_1 == name_2 && reported_funcs[i].line_1 == line_2) && (reported_funcs[i].name_2 == name_1 && reported_funcs[i].line_2 == line_1))) {
             raw_spin_unlock_irqrestore(&reported_lock, flags);
@@ -17,7 +17,7 @@ bool check_reported(unsigned long name_1, int line_1, unsigned long name_2, int 
 void push_reported(unsigned long name_1, int line_1, unsigned long name_2, int line_2) {
     unsigned long flags;
     raw_spin_lock_irqsave(&reported_lock, flags);
-    for (int i = 0; i < MAX_WATCHPOINTS; i++) {
+    for (int i = 0; i < REAL_NUM_WATCHPOINTS; i++) {
         if (reported_funcs[i].name_1 == 0) {
             reported_funcs[i].name_1 = name_1;
             reported_funcs[i].line_1 = line_1;

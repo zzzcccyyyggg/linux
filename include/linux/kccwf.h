@@ -1,8 +1,8 @@
+#ifndef CONFIG_KCCWF
 #define CONFIG_KCCWF
-#ifdef CONFIG_KCCWF
 #include <linux/types.h>
 #define MAX_LOG_ENTRIES 6553600 // 维持原条目数
-
+#define KCCWF_DEBUG 0
 
 #define KCCWF_MONITOR_ENABLE    BIT(0)  // 0x00000001
 #define KCCWF_LOG_ENABLE        BIT(1)  // 0x00000002
@@ -98,4 +98,36 @@ extern atomic_long_t stack_count;
 
 extern atomic_long_t kccwf_read_count;
 extern atomic_long_t kccwf_write_count;
+
+// 时间统计信息
+// 定义统计变量
+extern atomic_long_t time_condition_check_total;
+extern atomic_long_t time_stack_heap_total;
+extern atomic_long_t time_rw_counters_total;
+extern atomic_long_t time_get_time_tid_total;
+extern atomic_long_t time_delay_calculation_total;
+extern atomic_long_t time_access_info_setup_total;
+extern atomic_long_t time_watchpoint_processing_total;
+
+extern atomic_long_t count_condition_check;
+extern atomic_long_t count_stack_heap;
+extern atomic_long_t count_rw_counters;
+extern atomic_long_t count_get_time_tid;
+extern atomic_long_t count_delay_calculation;
+extern atomic_long_t count_access_info_setup;
+extern atomic_long_t count_watchpoint_processing;
+
+// BUCKET 
+#define KCCWF_NUM_WATCHPOINTS 8192
+#define KCCWF_CHECK_ADJACENT 1
+#define NUM_SLOTS (1 + 2*KCCWF_CHECK_ADJACENT)
+#define SLOT_IDX(slot, i) (slot + ((i + KCCWF_CHECK_ADJACENT) % NUM_SLOTS))
+#define SLOT_IDX_FAST(slot, i) (slot + i)
+#define REAL_NUM_WATCHPOINTS (KCCWF_NUM_WATCHPOINTS + NUM_SLOTS - 1)
+
+static __always_inline int watchpoint_slot(unsigned long addr)
+{
+	return (addr / PAGE_SIZE) % KCCWF_NUM_WATCHPOINTS;
+}
+
 #endif

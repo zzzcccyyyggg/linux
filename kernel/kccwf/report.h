@@ -6,11 +6,8 @@
 #include <linux/init.h>
 #include <linux/stacktrace.h>
 #include <asm/unwind.h>
-
+#include <linux/kccwf.h>
 #define NUM_STACK_ENTRIES 0x40
-#ifndef MAX_WATCHPOINTS
-#define MAX_WATCHPOINTS 4096
-#endif
 
 /* report info */
 
@@ -32,14 +29,14 @@ typedef struct reported {
 
 static DEFINE_RAW_SPINLOCK(report_lock);
 
-static report_info_t read_report_infos[MAX_WATCHPOINTS];
+static report_info_t read_report_infos[REAL_NUM_WATCHPOINTS];
 static DEFINE_RAW_SPINLOCK(read_report_lock);
 
-static report_info_t write_report_infos[MAX_WATCHPOINTS];
+static report_info_t write_report_infos[REAL_NUM_WATCHPOINTS];
 static DEFINE_RAW_SPINLOCK(write_report_lock);
 
-static reported_t reported_funcs[MAX_WATCHPOINTS];
-static reported_t unknown_reported_funcs[MAX_WATCHPOINTS];
+static reported_t reported_funcs[REAL_NUM_WATCHPOINTS];
+static reported_t unknown_reported_funcs[REAL_NUM_WATCHPOINTS];
 static DEFINE_RAW_SPINLOCK(reported_lock);
 
 
