@@ -32,9 +32,8 @@ static inline long
 encode_watchpoint(unsigned long addr, size_t size)
 {
     return (long)(
-        ((size & (WATCHPOINT_SIZE_MASK >> (BITS_PER_LONG - WATCHPOINT_SIZE_BITS))) 
-            << (BITS_PER_LONG - WATCHPOINT_SIZE_BITS)) |  // size 左移到高16位
-        (addr & WATCHPOINT_ADDR_MASK)                     // 地址保留低48位
+        (((size & MAX_ENCODABLE_SIZE) << (BITS_PER_LONG - WATCHPOINT_SIZE_BITS)) |  // size 左移到高16位
+        (addr & WATCHPOINT_ADDR_MASK))                     // 地址保留低48位
     );
 }
 

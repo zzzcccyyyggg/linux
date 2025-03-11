@@ -52,9 +52,9 @@ extern int checker_start;
 				if (atomic_long_try_cmpxchg(watchpoint, &found_watchpoint, \
 							    CONSUMED_VALUE)) { \
 					*found_addr = (unsigned long)var_access_info->var_addr; \
-					printk(KERN_INFO "var addr %lu",       \
-					       (long)var_access_info           \
-						       ->var_addr);            \
+					printk(KERN_INFO "var addr %lx, addr masked %lx\n",       \
+					       (unsigned long)var_access_info           \
+						       ->var_addr,addr_masked);            \
 					return watchpoint;                     \
 				}                                              \
 			}                                                      \
@@ -108,7 +108,7 @@ extern int checker_start;
 					 watchpoint - watchpoints_array,       \
 					 var_access_info->file_line,           \
 					 var_access_info->var_name);           \
-		const long enconded_watchpoint  = encode_watchpoint((unsigned long)var_access_info->var_addr,var_access_info->type); \
+		long enconded_watchpoint  = encode_watchpoint((unsigned long)var_access_info->var_addr,var_access_info->type); \
 		if (!atomic_long_try_cmpxchg_relaxed(                          \
 			    watchpoint, &expect_val,                           \
 			    enconded_watchpoint)) {       \
@@ -125,7 +125,7 @@ extern int checker_start;
 		}                                                              \
 		udelay(delay_time);                                            \
 		unsigned long temp = (unsigned long)var_access_info->var_addr; \
-		if (atomic_long_try_cmpxchg_relaxed(watchpoint, &temp,         \
+		if (atomic_long_try_cmpxchg_relaxed(watchpoint, &enconded_watchpoint,         \
 						    CONSUMED_VALUE)) {         \
 			clear_##name##_report_info(watchpoint -                \
 						   watchpoints_array);         \

@@ -1,4 +1,9 @@
 #include "core.h"
+#include "encoding.h"
+#include "linux/kern_levels.h"
+#include "linux/printk.h"
+#include "linux/types.h"
+#include "utils.h"
 
 static atomic_long_t read_watchpoints[REAL_NUM_WATCHPOINTS];
 static atomic_long_t write_watchpoints[REAL_NUM_WATCHPOINTS];
@@ -42,6 +47,13 @@ static __always_inline long consume_watchpoint(atomic_long_t *watchpoint)
 
 static __always_inline void remove_watchpoint(atomic_long_t *watchpoint)
 {
+	if (KCCWF_DEBUG) {
+		unsigned long addr_masked;
+		size_t size;
+		long encoded_wp = atomic_long_read(watchpoint);
+		decode_watchpoint(encoded_wp, &addr_masked, &size);
+		printk(KERN_INFO "remove read: var_addr %lx int tid %d\n",addr_masked,current->pid);
+	}
 	atomic_long_set(watchpoint, INVALID_VALUE);
 }
 
@@ -124,6 +136,7 @@ static __always_inline int get_delay_time(unsigned long target, unsigned long ca
 	
 			// 如果所有相同 var_name 的条目均未匹配 call_stack_hash
 			// 返回第一个找到的 var_name 的 delay_time（例如 mid 的位置）
+			printk(KERN_INFO "Found var_name %lu but not call_stack_hash %lu\n", target, call_stack_hash);
 			return 520;
 	
 		} else if (global_validate_delay[mid].var_name < target) {
@@ -262,23 +275,38 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	}
 	atomic_long_t *watchpoint;
 	long found_addr;
+	if (KCCWF_DEBUG) {
+		printk(KERN_INFO "rec_mem_access: var_addr %lx int tid %d\n",(unsigned long)var_access_info.var_addr,tid);
+	}
 	if (is_write) {
 		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
+			if (KCCWF_DEBUG) {
+				printk(KERN_INFO "found write: var_addr %lx int tid %d\n",(unsigned long)var_access_info.var_addr,tid);
+			}
 			found_write_watchpoint(&var_access_info, watchpoint, found_addr);
 		} else {
 			watchpoint = find_read_watchpoint(&var_access_info, &found_addr);
 			if (watchpoint) {
 				found_read_watchpoint(&var_access_info, watchpoint, found_addr);
 			} else {
+				if (KCCWF_DEBUG) {
+					printk(KERN_INFO "set write: var_addr %lx int tid %d\n",(unsigned long)var_access_info.var_addr,tid);
+				}
 				setup_write_watchpoint(&var_access_info);
 			}
 		}
 	} else {
 		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
+			if (KCCWF_DEBUG) {
+				printk(KERN_INFO "found read: var_addr %lx int tid %d\n",(unsigned long)var_access_info.var_addr,tid);
+			}
 			found_write_watchpoint(&var_access_info, watchpoint, found_addr);
 		} else {
+			if (KCCWF_DEBUG) {
+				printk(KERN_INFO "set read: var_addr %lx int tid %d\n",(unsigned long)var_access_info.var_addr,tid);
+			}
 			setup_read_watchpoint(&var_access_info);
 		}
 	}
