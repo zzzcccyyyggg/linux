@@ -32,34 +32,44 @@ extern int checker_start;
 // 函数定义
 #define PTR_TO_LONG(ptr) ((long)(unsigned long)(ptr))
 // FIX ME: USE MATCHING access
-#define DEFINE_FIND_WATCHPOINT_FUNCTION(name, watchpoints_array)               \
-	static __always_inline atomic_long_t *name(                            \
-		access_info_t *var_access_info, long *found_addr)              \
-	{                                                                      \
-		atomic_long_t *watchpoint;                                     \
-		const unsigned long addr_masked = (unsigned long)(var_access_info->var_addr) & WATCHPOINT_ADDR_MASK; \
-		long found_watchpoint; \
-		unsigned long watchpoint_addr_masked; \
-		size_t size; \
-		const int slot = watchpoint_slot(                              \
-			(unsigned long)var_access_info->var_addr);             \
-		for (int i = 0; i < NUM_SLOTS; i++) {                          \
-			watchpoint =                                           \
-				&watchpoints_array[SLOT_IDX_FAST(slot, i)];    \
-			found_watchpoint = atomic_long_read(watchpoint);              \
-			decode_watchpoint(found_watchpoint,&watchpoint_addr_masked,&size); \
-			if (matching_access(watchpoint_addr_masked, var_access_info->type, addr_masked, size)) {                                    \
-				if (atomic_long_try_cmpxchg(watchpoint, &found_watchpoint, \
-							    CONSUMED_VALUE)) { \
-					*found_addr = (unsigned long)var_access_info->var_addr; \
-					printk(KERN_INFO "var addr %lx, addr masked %lx\n",       \
-					       (unsigned long)var_access_info           \
-						       ->var_addr,addr_masked);            \
-					return watchpoint;                     \
-				}                                              \
-			}                                                      \
-		}                                                              \
-		return NULL;                                                   \
+#define DEFINE_FIND_WATCHPOINT_FUNCTION(name, watchpoints_array)                  \
+	static __always_inline atomic_long_t *name(                               \
+		access_info_t *var_access_info, long *found_addr)                 \
+	{                                                                         \
+		atomic_long_t *watchpoint;                                        \
+		const unsigned long addr_masked =                                 \
+			(unsigned long)(var_access_info->var_addr) &              \
+			WATCHPOINT_ADDR_MASK;                                     \
+		long found_watchpoint;                                            \
+		unsigned long watchpoint_addr_masked;                             \
+		size_t size;                                                      \
+		const int slot = watchpoint_slot(                                 \
+			(unsigned long)var_access_info->var_addr);                \
+		for (int i = 0; i < NUM_SLOTS; i++) {                             \
+			watchpoint =                                              \
+				&watchpoints_array[SLOT_IDX_FAST(slot, i)];       \
+			found_watchpoint = atomic_long_read(watchpoint);          \
+			decode_watchpoint(found_watchpoint,                       \
+					  &watchpoint_addr_masked, &size);        \
+			if (matching_access(watchpoint_addr_masked,               \
+					    var_access_info->type,                \
+					    addr_masked, size)) {                 \
+				if (atomic_long_try_cmpxchg(watchpoint,           \
+							    &found_watchpoint,    \
+							    CONSUMED_VALUE)) {    \
+					*found_addr =                             \
+						(unsigned long)var_access_info    \
+							->var_addr;               \
+					printk(KERN_INFO                          \
+					       "var addr %lx, addr masked %lx\n", \
+					       (unsigned long)var_access_info     \
+						       ->var_addr,                \
+					       addr_masked);                      \
+					return watchpoint;                        \
+				}                                                 \
+			}                                                         \
+		}                                                                 \
+		return NULL;                                                      \
 	}
 
 #define DEFINE_INSERT_WATCHPOINT_FUNCTION(name, watchpoints_array)           \
@@ -103,15 +113,18 @@ extern int checker_start;
 			return;                                                \
 		}                                                              \
                                                                                \
+		int cpu = raw_smp_processor_id();                              \
+		int tid = current->pid;                                        \
 		set_##name##_report_info(var_access_info->var_addr,            \
 					 var_access_info->is_write,            \
 					 watchpoint - watchpoints_array,       \
 					 var_access_info->file_line,           \
-					 var_access_info->var_name);           \
-		long enconded_watchpoint  = encode_watchpoint((unsigned long)var_access_info->var_addr,var_access_info->type); \
-		if (!atomic_long_try_cmpxchg_relaxed(                          \
-			    watchpoint, &expect_val,                           \
-			    enconded_watchpoint)) {       \
+					 var_access_info->var_name, tid, cpu); \
+		long enconded_watchpoint = encode_watchpoint(                  \
+			(unsigned long)var_access_info->var_addr,              \
+			var_access_info->type);                                \
+		if (!atomic_long_try_cmpxchg_relaxed(watchpoint, &expect_val,  \
+						     enconded_watchpoint)) {   \
 			clear_##name##_report_info(watchpoint -                \
 						   watchpoints_array);         \
 			remove_watchpoint(watchpoint);                         \
@@ -125,7 +138,8 @@ extern int checker_start;
 		}                                                              \
 		udelay(delay_time);                                            \
 		unsigned long temp = (unsigned long)var_access_info->var_addr; \
-		if (atomic_long_try_cmpxchg_relaxed(watchpoint, &enconded_watchpoint,         \
+		if (atomic_long_try_cmpxchg_relaxed(watchpoint,                \
+						    &enconded_watchpoint,      \
 						    CONSUMED_VALUE)) {         \
 			clear_##name##_report_info(watchpoint -                \
 						   watchpoints_array);         \

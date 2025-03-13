@@ -119,15 +119,16 @@ extern atomic_long_t count_watchpoint_processing;
 
 // BUCKET 
 #define KCCWF_NUM_WATCHPOINTS 8192
-#define KCCWF_CHECK_ADJACENT 1
+#define KCCWF_CHECK_ADJACENT 3
 #define NUM_SLOTS (1 + 2*KCCWF_CHECK_ADJACENT)
 #define SLOT_IDX(slot, i) (slot + ((i + KCCWF_CHECK_ADJACENT) % NUM_SLOTS))
 #define SLOT_IDX_FAST(slot, i) (slot + i)
 #define REAL_NUM_WATCHPOINTS (KCCWF_NUM_WATCHPOINTS + NUM_SLOTS - 1)
 
-static __always_inline int watchpoint_slot(unsigned long addr)
-{
-	return (addr / PAGE_SIZE) % KCCWF_NUM_WATCHPOINTS;
+// FIX ME REPLACE WITH A FAST HASH FUNCTION
+static __always_inline int watchpoint_slot(unsigned long addr) {
+    const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
+    return (addr * A) % KCCWF_NUM_WATCHPOINTS;
 }
 
 #endif

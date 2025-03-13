@@ -138,6 +138,20 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 			return -EFAULT;
 		}
 		break;
+	case PRINT_MAYRACEPAIR:
+		printk(KERN_INFO
+		       "[CHECKER_MONITOR] checker_monitor: PRINT_MAYRACEPAIR\n");
+		for (int i = 0;i < 256;i++){
+			if (global_validate_delay[i].var_name != 0 && global_validate_delay[i+1].delay_time != 0){ 
+				printk(KERN_INFO "var_name: %lu, call_stack_hash: %lu, delay_time: %d\n",
+					global_validate_delay[i].var_name,
+					global_validate_delay[i].call_stack_hash,
+					global_validate_delay[i].delay_time);
+			}else{
+				break;
+			}
+		}
+		break;
 	case STOP_VALIDATE_PHASE:
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: STOP_VALIDATE_PHASE\n");

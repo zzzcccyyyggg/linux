@@ -26,7 +26,7 @@ __u64 FNV1a_Hash_Ulong(unsigned long value) {
 void rec_func_enter(unsigned long func_name,char func_line) {
 	// printk(KERN_INFO "[KERNEL_MONITOR] rec_func_enter: %lu, %d\n", func_name, func_line);
 	// pid_t tid = get_thread_id();
-	if (IS_MONITOR_ENABLED(kccwf_mode) || current->kccwf_disable_count) {
+	if (current->kccwf_disable_count) {
 		return;
     }
     current->kccwf_disable_count++;
@@ -87,7 +87,7 @@ void print_call_stack(void) {
 }
 
 void rec_func_exit(unsigned long func_name, int func_line) {
-	if (kccwf_mode != IS_MONITOR_ENABLED(kccwf_mode) || current->kccwf_disable_count) {
+	if ( current->kccwf_disable_count) {
 		return;
     }
     current->kccwf_disable_count++;

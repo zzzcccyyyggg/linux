@@ -1,8 +1,8 @@
 #include "core.h"
 #include "encoding.h"
+#include "linux/kccwf.h"
 #include "linux/kern_levels.h"
 #include "linux/printk.h"
-#include "linux/types.h"
 #include "utils.h"
 
 static atomic_long_t read_watchpoints[REAL_NUM_WATCHPOINTS];
@@ -54,7 +54,7 @@ static __always_inline void remove_watchpoint(atomic_long_t *watchpoint)
 		decode_watchpoint(encoded_wp, &addr_masked, &size);
 		printk(KERN_INFO "remove read: var_addr %lx int tid %d\n",addr_masked,current->pid);
 	}
-	atomic_long_set(watchpoint, INVALID_VALUE);
+	atomic_long_set(watchpoint, INVALID_VALUE);	
 }
 
 static __always_inline bool try_consume_watchpoint(atomic_long_t *watchpoint, long found_addr)
@@ -110,9 +110,10 @@ static __always_inline int get_delay_time(unsigned long target, unsigned long ca
 
 	while (left <= right) {
 		int mid = left + (right - left) / 2;
-		if (global_validate_delay[mid].var_name == target) {
+		if (global_validate_delay[mid].var_name == target && target != 0) {
 			// 先检查当前 mid 的 call_stack_hash
 			if (global_validate_delay[mid].call_stack_hash == call_stack_hash) {
+				printk(KERN_INFO "Found var_name %lu and call_stack_hash %lu\n", target, call_stack_hash);
 				return 2 * global_validate_delay[mid].delay_time;
 			}
 	
@@ -120,6 +121,7 @@ static __always_inline int get_delay_time(unsigned long target, unsigned long ca
 			int i = mid - 1;
 			while (i >= left && global_validate_delay[i].var_name == target) {
 				if (global_validate_delay[i].call_stack_hash == call_stack_hash) {
+					printk(KERN_INFO "Found var_name %lu and call_stack_hash %lu\n", target, call_stack_hash);
 					return 2 * global_validate_delay[i].delay_time;
 				}
 				i--;
@@ -129,6 +131,7 @@ static __always_inline int get_delay_time(unsigned long target, unsigned long ca
 			int j = mid + 1;
 			while (j <= right && global_validate_delay[j].var_name == target) {
 				if (global_validate_delay[j].call_stack_hash == call_stack_hash) {
+					printk(KERN_INFO "Found var_name %lu and call_stack_hash %lu\n", target, call_stack_hash);
 					return 2 * global_validate_delay[j].delay_time;
 				}
 				j++;
@@ -136,7 +139,9 @@ static __always_inline int get_delay_time(unsigned long target, unsigned long ca
 	
 			// 如果所有相同 var_name 的条目均未匹配 call_stack_hash
 			// 返回第一个找到的 var_name 的 delay_time（例如 mid 的位置）
-			printk(KERN_INFO "Found var_name %lu but not call_stack_hash %lu\n", target, call_stack_hash);
+			// printk(KERN_INFO "Found var_name %lu but not call_stack_hash %lu\n", target, call_stack_hash);
+			if(KCCWF_DEBUG) 
+				printk(KERN_INFO "Found var_name %lu but not call_stack_hash %lu\n", target, call_stack_hash);
 			return 520;
 	
 		} else if (global_validate_delay[mid].var_name < target) {
@@ -172,20 +177,21 @@ atomic_long_t count_access_info_setup = ATOMIC_LONG_INIT(0);
 atomic_long_t count_watchpoint_processing = ATOMIC_LONG_INIT(0);
 
 void rec_mem_access(const volatile void *addr, unsigned long var_name,
-		    int is_write, int file_line, int type)
+	int is_write, int file_line, int type)
 {
-	ktime_t start, end;
-	u64 delta;
-
+		ktime_t start, end;
+		u64 delta;
+		unsigned long irq_flags = 0;
+		local_irq_save(irq_flags);
 	// 测量条件检查部分
 	// start = ktime_get();
-	// if (kccwf_mode == KCCWF_DISABLE_MODE || current->kccwf_disable_count) {
-	// 	// end = ktime_get();
-	// 	// delta = ktime_to_ns(ktime_sub(end, start));
-	// 	//atomic_long_add(delta, &time_condition_check_total);
-	// 	//atomic_long_inc(&count_condition_check);
-	// 	return;
-	// }
+	if (current->kccwf_disable_count) {
+		// end = ktime_get();
+		// delta = ktime_to_ns(ktime_sub(end, start));
+		//atomic_long_add(delta, &time_condition_check_total);
+		//atomic_long_inc(&count_condition_check);
+		return;
+	}
 	if (!addr) {
 		// end = ktime_get();
 		// delta = ktime_to_ns(ktime_sub(end, start));
@@ -197,7 +203,7 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	// delta = ktime_to_ns(ktime_sub(end, start));
 	//atomic_long_add(delta, &time_condition_check_total);
 	//atomic_long_inc(&count_condition_check);
-
+	
 	// 测量栈/堆检查
 	// start = ktime_get();
 	if (is_stack_pointer((unsigned long)addr)) {
@@ -207,10 +213,10 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	}else {
 		if (KCCWF_DEBUG) atomic_long_inc(&heap_count);
 	}
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_stack_heap_total);
-	// atomic_long_inc(&count_stack_heap);
+// end = ktime_get();
+// delta = ktime_to_ns(ktime_sub(end, start));
+// atomic_long_add(delta, &time_stack_heap_total);
+// atomic_long_inc(&count_stack_heap);
 
 	// 测量读写计数器
 	// start = ktime_get();
@@ -229,11 +235,11 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	ktime_t access_time = ktime_get();
 	pid_t tid = current->pid;
 	unsigned long call_stack_hash = get_current_thread_hash(tid); // 简化示例
+	// printk(KERN_INFO "rec_mem_access: call stack hash %lu int tid %d\n",call_stack_hash,tid);
 	// end = ktime_get();
 	// delta = ktime_to_ns(ktime_sub(end, start));
 	// atomic_long_add(delta, &time_get_time_tid_total);
 	// atomic_long_inc(&count_get_time_tid);
-
 	// 测量延迟计算
 	// start = ktime_get();
 	int delay_time = get_delay_time(var_name, call_stack_hash);
@@ -271,7 +277,8 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	// 测量观察点处理
 	// start = ktime_get();
 	if (IS_LOG_ENABLED(kccwf_mode)) {
-		log_access_info(&var_access_info);
+		// log_access_info(&var_access_info);
+		log_access_info_ftrace(&var_access_info);
 	}
 	atomic_long_t *watchpoint;
 	long found_addr;
@@ -314,6 +321,7 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	// delta = ktime_to_ns(ktime_sub(end, start));
 	// atomic_long_add(delta, &time_watchpoint_processing_total);
 	// atomic_long_inc(&count_watchpoint_processing);
+	local_irq_restore(irq_flags);
 }
 EXPORT_SYMBOL(rec_mem_access);
 
@@ -325,3 +333,11 @@ void disable_kccwf_free_rec(void){
 	current->kccwf_free_enable_count--;
 }
 EXPORT_SYMBOL(disable_kccwf_free_rec);
+
+const unsigned long kccwf_rec_ins_const = 2654435761U;
+unsigned long insruction_run_hash = 1;
+void kccwf_rec_ins(unsigned long index){
+	const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
+    insruction_run_hash = (insruction_run_hash * A * index);
+}
+EXPORT_SYMBOL(kccwf_rec_ins);
