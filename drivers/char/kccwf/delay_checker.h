@@ -19,6 +19,7 @@
 #include <linux/device.h>
 #include <linux/kccwf.h>
 
+
 #define DEV_MAGIC 'c'
 #define START_STABLE_LOGGING _IO(DEV_MAGIC, 0)
 #define STOP_STABLE_LOGGING _IO(DEV_MAGIC, 1)

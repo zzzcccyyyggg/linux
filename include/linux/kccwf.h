@@ -3,6 +3,7 @@
 #include <linux/types.h>
 #define MAX_LOG_ENTRIES 6553600 // 维持原条目数
 #define KCCWF_DEBUG 0
+#define TIME_MEASUREMENT 0
 
 #define KCCWF_MONITOR_ENABLE    BIT(0)  // 0x00000001
 #define KCCWF_LOG_ENABLE        BIT(1)  // 0x00000002
@@ -99,23 +100,15 @@ extern atomic_long_t stack_count;
 extern atomic_long_t kccwf_read_count;
 extern atomic_long_t kccwf_write_count;
 
-// 时间统计信息
-// 定义统计变量
-extern atomic_long_t time_condition_check_total;
-extern atomic_long_t time_stack_heap_total;
-extern atomic_long_t time_rw_counters_total;
-extern atomic_long_t time_get_time_tid_total;
-extern atomic_long_t time_delay_calculation_total;
-extern atomic_long_t time_access_info_setup_total;
-extern atomic_long_t time_watchpoint_processing_total;
 
+// 统计变量
+
+extern atomic_long_t time_condition_check_total;
 extern atomic_long_t count_condition_check;
-extern atomic_long_t count_stack_heap;
-extern atomic_long_t count_rw_counters;
-extern atomic_long_t count_get_time_tid;
-extern atomic_long_t count_delay_calculation;
-extern atomic_long_t count_access_info_setup;
-extern atomic_long_t count_watchpoint_processing;
+extern atomic_long_t time_preparing_stage;
+extern atomic_long_t count_preparing_stage;
+extern atomic_long_t time_watchpoint_processing_total;
+extern atomic_long_t count_watchpoint_processing_total;
 
 // BUCKET 
 #define KCCWF_NUM_WATCHPOINTS 8192
@@ -130,5 +123,23 @@ static __always_inline int watchpoint_slot(unsigned long addr) {
     const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
     return (addr * A) % KCCWF_NUM_WATCHPOINTS;
 }
+
+
+// execution flow
+extern bool kccwf_exec_bbflow_enable;
+
+struct block_event {
+    u64 timestamp;
+    u64 block_id;
+    struct list_head list;
+};
+
+struct ccwf_percpu_bbflows {
+    struct block_event *buffer;     // 每个 CPU 独立的缓冲区
+    unsigned long count;            // 独立的计数器
+    unsigned long buffer_size;      // 缓冲区大小（按 block_event 数量计算）
+};
+
+void init_ccwf_event_list(void);
 
 #endif

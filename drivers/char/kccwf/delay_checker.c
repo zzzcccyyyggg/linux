@@ -1,6 +1,5 @@
 #include "delay_checker.h"
-#include "linux/printk.h"
-#include "linux/stddef.h"
+
 
 int stable_logging_phase = 0;
 int random_delay_logging_phase = 1;
@@ -9,6 +8,7 @@ int validating_phase = 0;
 delay_var_t global_sync_delay[2];
 delay_var_t global_validate_delay[256];
 int is_log_init = 0;
+
 static int checker_open(struct inode *inode, struct file *filp)
 {
 	return 0;
@@ -58,6 +58,7 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 		kccwf_mode = KCCWF_MONITOR_MODE;
 		break;
 	case START_STABLE_LOGGING:
+		kccwf_exec_bbflow_enable = true;
 		if (!is_log_init){
 			logger_init();
 			is_log_init = true;
@@ -178,43 +179,16 @@ static int proc_show_kccwf_stats(struct seq_file *m, void *v)
 		atomic_long_read(&count_condition_check),
 		atomic_long_read(&count_condition_check) ? 
 		atomic_long_read(&time_condition_check_total) / atomic_long_read(&count_condition_check) : 0);
-	
-	seq_printf(m, "Stack/Heap Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_stack_heap_total),
-		atomic_long_read(&count_stack_heap),
-		atomic_long_read(&count_stack_heap) ? 
-		atomic_long_read(&time_stack_heap_total) / atomic_long_read(&count_stack_heap) : 0);
-
-	seq_printf(m, "RW Counters:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_rw_counters_total),
-		atomic_long_read(&count_rw_counters),
-		atomic_long_read(&count_rw_counters) ? 
-		atomic_long_read(&time_rw_counters_total) / atomic_long_read(&count_rw_counters) : 0);
-
-	seq_printf(m, "Get Time/TID:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_get_time_tid_total),
-		atomic_long_read(&count_get_time_tid),
-		atomic_long_read(&count_get_time_tid) ? 
-		atomic_long_read(&time_get_time_tid_total) / atomic_long_read(&count_get_time_tid) : 0);
-
-	seq_printf(m, "Delay Calculation:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_delay_calculation_total),
-		atomic_long_read(&count_delay_calculation),
-		atomic_long_read(&count_delay_calculation) ? 
-		atomic_long_read(&time_delay_calculation_total) / atomic_long_read(&count_delay_calculation) : 0);
-
-	seq_printf(m, "Access Info Setup:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_access_info_setup_total),
-		atomic_long_read(&count_access_info_setup),
-		atomic_long_read(&count_access_info_setup) ? 
-		atomic_long_read(&time_access_info_setup_total) / atomic_long_read(&count_access_info_setup) : 0);
-
-	seq_printf(m, "Watchpoint Processing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+	seq_printf(m, "Preparing Stage:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&time_preparing_stage),
+		atomic_long_read(&count_preparing_stage),
+		atomic_long_read(&count_preparing_stage) ? 
+		atomic_long_read(&time_preparing_stage) / atomic_long_read(&count_preparing_stage) : 0);
+	seq_printf(m, "Watching Processsing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
 		atomic_long_read(&time_watchpoint_processing_total),
-		atomic_long_read(&count_watchpoint_processing),
-		atomic_long_read(&count_watchpoint_processing) ? 
-		atomic_long_read(&time_watchpoint_processing_total) / atomic_long_read(&count_watchpoint_processing) : 0);
-
+		atomic_long_read(&count_watchpoint_processing_total),
+		atomic_long_read(&count_watchpoint_processing_total) ? 
+		atomic_long_read(&time_watchpoint_processing_total) / atomic_long_read(&count_watchpoint_processing_total) : 0);
 	return 0;
 }
 
@@ -299,6 +273,7 @@ static int __init checker_init(void)
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module loaded\n");
 	// logger_init();
+	init_ccwf_event_list();
 	proc_create("kccwf_stats", 0, NULL, &proc_fops);
 	return 0;
 }

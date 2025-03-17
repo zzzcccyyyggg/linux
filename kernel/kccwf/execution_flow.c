@@ -1,47 +1,59 @@
 #include "execution_flow.h"
-struct ccwf_exec_bbflow_list ccwf_event_list;
+
+DEFINE_PER_CPU(struct ccwf_percpu_bbflows, ccwf_percpu_bbflow_vec);
+struct block_event *kccwf_rec_bbs_vec;
 int kccwf_exec_bbflow_init = false;
 unsigned long  ccwf_flow_count = 0;
 void init_ccwf_event_list(void) {
-    INIT_LIST_HEAD(&ccwf_event_list.head);
-    spin_lock_init(&ccwf_event_list.lock);
-    ccwf_event_list.cache = kmem_cache_create(
-        "block_exec_flow_cache", 
-        sizeof(struct block_event), 
-        0, 
-        SLAB_HWCACHE_ALIGN, 
-        NULL
-    );
+    int cpu;
+    for_each_possible_cpu(cpu) {
+        struct ccwf_percpu_bbflows *pcpu = &per_cpu(ccwf_percpu_bbflow_vec, cpu);
+        pcpu->buffer_size = 16 * 1024 * 1024 / sizeof(struct block_event);
+        pcpu->buffer = vmalloc(pcpu->buffer_size * sizeof(struct block_event));
+        if (!pcpu->buffer) {
+            printk(KERN_ERR "Failed to allocate per-CPU buffer for CPU %d\n", cpu);
+            return;
+        }
+        printk(KERN_ERR "Failed to allocate per-CPU buffer for CPU %d\n", cpu);
+        pcpu->count = 0;
+    }
+    printk(KERN_WARNING "Successfully start kccwf rec bbs\n");
 }
 
 void cleanup_ccwf_event_list(void) {
-    struct list_head *pos, *next;
-    spin_lock(&ccwf_event_list.lock);
-    list_for_each_safe(pos, next, &ccwf_event_list.head) {
-        struct block_event *event = list_entry(pos, struct block_event, list);
-        list_del(pos);
-        kmem_cache_free(ccwf_event_list.cache, event);
+    int cpu;
+
+    // 释放每个 CPU 的缓冲区
+    for_each_possible_cpu(cpu) {
+        struct ccwf_percpu_bbflows *pcpu = &per_cpu(ccwf_percpu_bbflow_vec, cpu);
+        if (pcpu->buffer) {
+            vfree(pcpu->buffer);
+            pcpu->buffer = NULL;
+        }
     }
-    spin_unlock(&ccwf_event_list.lock);
-    kmem_cache_destroy(ccwf_event_list.cache);
 }
 
+bool kccwf_exec_bbflow_enable = false;
 void kccwf_rec_bbs(u64 block_id) {
-    // 从SLAB缓存快速分配节点（避免动态内存分配开销）
-    if(!kccwf_exec_bbflow_init) init_ccwf_event_list();
-    struct block_event *event = kmem_cache_alloc(ccwf_event_list.cache, GFP_ATOMIC);
-    if (!event) {
-        printk(KERN_WARNING "Failed to allocate block event node!\n");
+    if (!kccwf_exec_bbflow_enable) return;
+    struct ccwf_percpu_bbflows *pcpu;
+    unsigned long flags;
+    local_irq_disable();       
+    pcpu = this_cpu_ptr(&ccwf_percpu_bbflow_vec);
+
+    if (pcpu->count >= pcpu->buffer_size) {
+        printk_once(KERN_WARNING "Per-CPU buffer full on CPU %d, count %llu\n", smp_processor_id(),pcpu->count);
+        local_irq_enable();
         return;
     }
-    event->timestamp = ktime_get_ns();
-    event->block_id = block_id;
 
-    spin_lock(&ccwf_event_list.lock);
-    ccwf_flow_count++;
-    if (ccwf_flow_count % 100000 == 0){
-        printk(KERN_INFO "Flow block count %llu\n",ccwf_flow_count);
+    pcpu->buffer[pcpu->count].block_id = block_id;
+    pcpu->buffer[pcpu->count].timestamp = ktime_get_ns();
+    pcpu->count++;
+
+    if (pcpu->count % 100000 == 0) {
+        printk(KERN_INFO "CPU %d block count: %lu\n", smp_processor_id(), pcpu->count);
     }
-    list_add_tail(&event->list, &ccwf_event_list.head);
-    spin_unlock(&ccwf_event_list.lock);
+
+    local_irq_enable();
 }

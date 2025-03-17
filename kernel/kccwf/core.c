@@ -1,5 +1,6 @@
 #include "core.h"
 #include "encoding.h"
+#include "linux/atomic/atomic-long.h"
 #include "linux/kccwf.h"
 #include "linux/kern_levels.h"
 #include "linux/printk.h"
@@ -12,6 +13,13 @@ static atomic_t may_race_pair_trigger_flag = ATOMIC_INIT(0);
 static atomic_t validate_race_pair_trigger_flag = ATOMIC_INIT(0);
 atomic_long_t kccwf_read_count = ATOMIC_INIT(0);
 atomic_long_t kccwf_write_count = ATOMIC_INIT(0);
+
+atomic_long_t time_condition_check_total = ATOMIC_LONG_INIT(0);
+atomic_long_t count_condition_check = ATOMIC_LONG_INIT(0);
+atomic_long_t time_preparing_stage = ATOMIC_LONG_INIT(0);
+atomic_long_t count_preparing_stage = ATOMIC_LONG_INIT(0);
+atomic_long_t time_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
+atomic_long_t count_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
 
 DEFINE_READ_INSTRUMENTED_MEMORY(8)
 DEFINE_READ_INSTRUMENTED_MEMORY(16)
@@ -159,89 +167,44 @@ static __always_inline void log_access_info_ftrace(const access_info_t *var_acce
     trace_printk("Access info:  %p,  %d,  %lu,  %d,  %d,  %lu,  %d,  %lu,  %d,  %d\n",
                  var_access_info->var_addr, var_access_info->is_write, var_access_info->var_name, var_access_info->file_line, var_access_info->type, var_access_info->access_time, var_access_info->tid, var_access_info->call_stack_hash, var_access_info->delay_time, var_access_info->is_skip);
 }
-// 定义统计变量
-atomic_long_t time_condition_check_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_stack_heap_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_rw_counters_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_get_time_tid_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_delay_calculation_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_access_info_setup_total = ATOMIC_LONG_INIT(0);
-atomic_long_t time_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
-
-atomic_long_t count_condition_check = ATOMIC_LONG_INIT(0);
-atomic_long_t count_stack_heap = ATOMIC_LONG_INIT(0);
-atomic_long_t count_rw_counters = ATOMIC_LONG_INIT(0);
-atomic_long_t count_get_time_tid = ATOMIC_LONG_INIT(0);
-atomic_long_t count_delay_calculation = ATOMIC_LONG_INIT(0);
-atomic_long_t count_access_info_setup = ATOMIC_LONG_INIT(0);
-atomic_long_t count_watchpoint_processing = ATOMIC_LONG_INIT(0);
 
 void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	int is_write, int file_line, int type)
 {
-		ktime_t start, end;
-		u64 delta;
-		unsigned long irq_flags = 0;
-		local_irq_save(irq_flags);
-	// 测量条件检查部分
-	// start = ktime_get();
-	if (current->kccwf_disable_count) {
-		// end = ktime_get();
-		// delta = ktime_to_ns(ktime_sub(end, start));
-		//atomic_long_add(delta, &time_condition_check_total);
-		//atomic_long_inc(&count_condition_check);
-		return;
+	ktime_t start, end;
+	u64 delta;
+	unsigned long irq_flags = 0;
+	local_irq_save(irq_flags);
+
+	// condition checking part
+	if(TIME_MEASUREMENT) start = ktime_get();
+	if (current->kccwf_disable_count || !addr) {
+		goto exit_label;
 	}
-	if (!addr) {
-		// end = ktime_get();
-		// delta = ktime_to_ns(ktime_sub(end, start));
-		//atomic_long_add(delta, &time_condition_check_total);
-		//atomic_long_inc(&count_condition_check);
-		return;
-	}
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	//atomic_long_add(delta, &time_condition_check_total);
-	//atomic_long_inc(&count_condition_check);
-	
-	// 测量栈/堆检查
-	// start = ktime_get();
 	if (is_stack_pointer((unsigned long)addr)) {
-		if (KCCWF_DEBUG)
-			atomic_long_inc(&stack_count);
-		return;
+		if (KCCWF_DEBUG) atomic_long_inc(&stack_count);
+		goto exit_label;
 	}else {
 		if (KCCWF_DEBUG) atomic_long_inc(&heap_count);
 	}
-// end = ktime_get();
-// delta = ktime_to_ns(ktime_sub(end, start));
-// atomic_long_add(delta, &time_stack_heap_total);
-// atomic_long_inc(&count_stack_heap);
-
-	// 测量读写计数器
-	// start = ktime_get();
 	if (is_write) {
 		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_write_count);
 	} else {
 		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_read_count);
 	}
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_rw_counters_total);
-	// atomic_long_inc(&count_rw_counters);
+	if(TIME_MEASUREMENT){
+		end = ktime_get();
+		delta = ktime_to_ns(ktime_sub(end, start));
+		atomic_long_add(delta, &time_condition_check_total);
+		atomic_long_inc(&count_condition_check);
+	}
 
-	// 测量获取时间和TID
-	// start = ktime_get();
+	// preparation stage
+	if (TIME_MEASUREMENT) start = ktime_get();
 	ktime_t access_time = ktime_get();
 	pid_t tid = current->pid;
-	unsigned long call_stack_hash = get_current_thread_hash(tid); // 简化示例
-	// printk(KERN_INFO "rec_mem_access: call stack hash %lu int tid %d\n",call_stack_hash,tid);
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_get_time_tid_total);
-	// atomic_long_inc(&count_get_time_tid);
-	// 测量延迟计算
-	// start = ktime_get();
+	unsigned long call_stack_hash = get_current_thread_hash(tid);
+
 	int delay_time = get_delay_time(var_name, call_stack_hash);
 	if (!delay_time && IS_RANDOM_ENABLED(kccwf_mode)) {
 		if (get_random_u32_below(1000) < DELAY_PROBABILITY) {
@@ -250,13 +213,6 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 	} else {
 		delay_time = 0;
 	}
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_delay_calculation_total);
-	// atomic_long_inc(&count_delay_calculation);
-
-	// 测量构造访问信息结构体
-	// start = ktime_get();
 	access_info_t var_access_info = { 
 		.is_write = is_write,
 		.file_line = file_line,
@@ -269,13 +225,15 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 		.delay_time = delay_time,
 		.is_skip = 0 
 	};
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_access_info_setup_total);
-	// atomic_long_inc(&count_access_info_setup);
+	if (TIME_MEASUREMENT){
+		end = ktime_get();
+		delta = ktime_to_ns(ktime_sub(end, start));
+		atomic_long_add(delta, &time_preparing_stage);
+		atomic_long_inc(&count_preparing_stage);
+	}
 
 	// 测量观察点处理
-	// start = ktime_get();
+	if(TIME_MEASUREMENT) start = ktime_get();
 	if (IS_LOG_ENABLED(kccwf_mode)) {
 		// log_access_info(&var_access_info);
 		log_access_info_ftrace(&var_access_info);
@@ -317,10 +275,13 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name,
 			setup_read_watchpoint(&var_access_info);
 		}
 	}
-	// end = ktime_get();
-	// delta = ktime_to_ns(ktime_sub(end, start));
-	// atomic_long_add(delta, &time_watchpoint_processing_total);
-	// atomic_long_inc(&count_watchpoint_processing);
+	if(TIME_MEASUREMENT){
+		end = ktime_get();
+		delta = ktime_to_ns(ktime_sub(end, start));
+		atomic_long_add(delta, &time_watchpoint_processing_total);
+		atomic_long_inc(&count_watchpoint_processing_total);
+	}
+exit_label:
 	local_irq_restore(irq_flags);
 }
 EXPORT_SYMBOL(rec_mem_access);
@@ -329,15 +290,8 @@ void enable_kccwf_free_rec(void){
 	current->kccwf_free_enable_count++;
 }
 EXPORT_SYMBOL(enable_kccwf_free_rec);
+
 void disable_kccwf_free_rec(void){
 	current->kccwf_free_enable_count--;
 }
 EXPORT_SYMBOL(disable_kccwf_free_rec);
-
-const unsigned long kccwf_rec_ins_const = 2654435761U;
-unsigned long insruction_run_hash = 1;
-void kccwf_rec_ins(unsigned long index){
-	const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
-    insruction_run_hash = (insruction_run_hash * A * index);
-}
-EXPORT_SYMBOL(kccwf_rec_ins);
