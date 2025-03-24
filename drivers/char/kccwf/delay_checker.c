@@ -1,4 +1,5 @@
 #include "delay_checker.h"
+#include "linux/kccwf.h"
 
 
 int stable_logging_phase = 0;
@@ -8,7 +9,13 @@ int validating_phase = 0;
 delay_var_t global_sync_delay[2];
 delay_var_t global_validate_delay[256];
 int is_log_init = 0;
-
+static void status_cleared(void){
+	memset(kccwf_read_access_infos_sn, 0, sizeof(atomic64_t) * KCCWF_MAX_READ_ACCESS_INFOS);
+	// atomic_long_set(&kccwf_access_twbuffer.head, 0);
+	// atomic_long_set(&kccwf_access_twbuffer.tail, 0);
+	// kccwf_write_access_buffer_head = 0;
+	// kccwf_write_access_buffer_tail = 0;
+}
 static int checker_open(struct inode *inode, struct file *filp)
 {
 	return 0;
@@ -26,138 +33,48 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 	long _write_count,_read_count,_heap_count,_stack_count;
 
 	switch (cmd) {
-	case CLEAN_LOG:
-		// kccwf_log_file_clean = true;
+	case TURN_OFF_KCCWF:
+		kccwf_mode = KCCWF_DISABLE_MODE;
 		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: CLEAN_LOG\n");
-		break;
-	case STOP_LOG:
-		TURN_OFF_LOG(kccwf_mode);
-		if (KCCWF_DEBUG) {
-			_write_count = atomic_long_read(&kccwf_write_count);
-			_read_count = atomic_long_read(&kccwf_read_count);
-			_stack_count = atomic_long_read(&stack_count);
-			_heap_count = atomic_long_read(&heap_count);
-			printk(KERN_INFO "[CHECKER_MONITOR] The write point access: %ld, the read point access %ld\n",_write_count,_read_count);
-			printk(KERN_INFO "[CHECKER_MONITOR] Stack count: %ld, Heap count %ld\n",_stack_count,_heap_count);
-			atomic_long_set(&kccwf_write_count, 0);
-			atomic_long_set(&kccwf_read_count, 0);
-			atomic_long_set(&stack_count, 0);
-			atomic_long_set(&heap_count, 0);
-		}
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: STOP LOG\n");
-		break;
-	case START_FUZZER:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: START_CHECKER\n");
+			"[CHECKER_MONITOR] checker_monitor: TURN_OFF_KCCWF\n");
 		break;
 	case START_MONITOR:
+		kccwf_mode = KCCWF_MONITOR_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_MONITOR\n");
-		kccwf_mode = KCCWF_MONITOR_MODE;
 		break;
-	case START_STABLE_LOGGING:
-		kccwf_exec_bbflow_enable = true;
-		if (!is_log_init){
-			logger_init();
-			is_log_init = true;
-		}
+	case START_LOG_PHASE:
+		status_cleared();
+		kccwf_mode = KCCWF_LOG_MODE;
 		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: START_STABLE_LOGGING\n");
-		kccwf_mode = KCCWF_STABLE_SAMPLING;
-		break;
-	case STOP_STABLE_LOGGING:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: STOP_STABLE_LOGGING\n");
-
-		kccwf_mode = KCCWF_MONITOR_MODE;
-		break;
-	case START_RANDOM_DELAY_LOGGING:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: START_RANDOM_DELAY_LOGGING\n");
-		kccwf_mode = KCCWF_RANDOM_SAMPLING;
-		break;
-	case STOP_RANDOM_DELAY_LOGGING:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: STOP_RANDOM_DELAY_LOGGING\n");
-		kccwf_mode = KCCWF_MONITOR_MODE;
+		       "[CHECKER_MONITOR] checker_monitor: START_LOG_PHASE\n");
 		break;
 	case START_CHECK_SYNC_PHASE:
+		status_cleared();
+		kccwf_mode = KCCWF_CHECK_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_CHECK_SYNC_PHASE\n");
-		checking_sync_phase = 1;
-		break;
-	case COPY_SYNC_STRUCT:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: COPY_SYNC_STRUCT\n");
-		ret = copy_from_user(global_sync_delay, (unsigned char *)arg,
-				     2 * sizeof(delay_var_t));
-		if (ret) {
-			printk(KERN_WARNING
-			       "[CHECKER_MONITOR] checker_monitor: copy_from_user failed\n");
-			return -EFAULT;
-		}
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[0].var_name = %lu\n",
-		       global_sync_delay[0].var_name);
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[0].call_stack_hash = %lu\n",
-		       global_sync_delay[0].call_stack_hash);
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[0].delay_time = %d\n",
-		       global_sync_delay[0].delay_time);
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[1].var_name = %lu\n",
-		       global_sync_delay[1].var_name);
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[1].call_stack_hash = %lu\n",
-		       global_sync_delay[1].call_stack_hash);
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: global_sync_delay[1].delay_time = %d\n",
-		       global_sync_delay[1].delay_time);
-		break;
-	case STOP_CHECK_SYNC_PHASE:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: STOP_CHECK_SYNC_PHASE\n");
-		checking_sync_phase = 0;
 		break;
 	case START_VALIDATE_PHASE:
+		status_cleared();
+		kccwf_mode = KCCWF_VALIDATE_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_VALIDATE_PHASE\n");
-		validating_phase = 1;
 		break;
-	case COPY_VALIDATE_STRUCT:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: COPY_VALIDATE_STRUCT\n");
-		ret = copy_from_user(global_validate_delay,
-				     (unsigned char *)arg,
-				     256 * sizeof(delay_var_t));
-		if (ret) {
-			printk(KERN_WARNING
-			       "[CHECKER_MONITOR] checker_monitor: copy_from_user failed\n");
-			return -EFAULT;
-		}
-		break;
-	case PRINT_MAYRACEPAIR:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: PRINT_MAYRACEPAIR\n");
-		for (int i = 0;i < 256;i++){
-			if (global_validate_delay[i].var_name != 0 && global_validate_delay[i+1].delay_time != 0){ 
-				printk(KERN_INFO "var_name: %lu, call_stack_hash: %lu, delay_time: %d\n",
-					global_validate_delay[i].var_name,
-					global_validate_delay[i].call_stack_hash,
-					global_validate_delay[i].delay_time);
-			}else{
-				break;
-			}
-		}
-		break;
-	case STOP_VALIDATE_PHASE:
-		printk(KERN_INFO
-		       "[CHECKER_MONITOR] checker_monitor: STOP_VALIDATE_PHASE\n");
-		validating_phase = 0;
-		break;
+	// case: PRINT_INFO:
+	// 	if (KCCWF_DEBUG) {
+	// 		_write_count = atomic_long_read(&kccwf_write_count);
+	// 		_read_count = atomic_long_read(&kccwf_read_count);
+	// 		_stack_count = atomic_long_read(&stack_count);
+	// 		_heap_count = atomic_long_read(&heap_count);
+	// 		printk(KERN_INFO "[CHECKER_MONITOR] The write point access: %ld, the read point access %ld\n",_write_count,_read_count);
+	// 		printk(KERN_INFO "[CHECKER_MONITOR] Stack count: %ld, Heap count %ld\n",_stack_count,_heap_count);
+	// 		atomic_long_set(&kccwf_write_count, 0);
+	// 		atomic_long_set(&kccwf_read_count, 0);
+	// 		atomic_long_set(&stack_count, 0);
+	// 		atomic_long_set(&heap_count, 0);
+	// 	}
+	// 	break;
 	}
 	return 0;
 }
@@ -272,8 +189,7 @@ static int __init checker_init(void)
 
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module loaded\n");
-	// logger_init();
-	init_ccwf_event_list();
+	kccwf_access_twbuffer_init();
 	proc_create("kccwf_stats", 0, NULL, &proc_fops);
 	return 0;
 }
@@ -292,7 +208,8 @@ static void __exit checker_exit(void)
 	unregister_chrdev_region(dev, 1);
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module unloaded\n");
-	logger_exit();
+	kccwf_core_exit();
+	kccwf_access_twbuffer_clean();
 }
 
 MODULE_LICENSE("GPL");

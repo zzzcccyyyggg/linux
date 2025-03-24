@@ -10,7 +10,6 @@
 #include <linux/kccwf.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
-#include "call_stack.h"
 #include "encoding.h"
 #include "report.h"
 
@@ -52,7 +51,7 @@ extern int checker_start;
 			decode_watchpoint(found_watchpoint,                       \
 					  &watchpoint_addr_masked, &size);        \
 			if (matching_access(watchpoint_addr_masked,               \
-					    var_access_info->type,                \
+					    var_access_info->size,                \
 					    addr_masked, size)) {                 \
 				if (atomic_long_try_cmpxchg(watchpoint,           \
 							    &found_watchpoint,    \
@@ -122,7 +121,7 @@ extern int checker_start;
 					 var_access_info->var_name, tid, cpu); \
 		long enconded_watchpoint = encode_watchpoint(                  \
 			(unsigned long)var_access_info->var_addr,              \
-			var_access_info->type);                                \
+			var_access_info->size);                                \
 		if (!atomic_long_try_cmpxchg_relaxed(watchpoint, &expect_val,  \
 						     enconded_watchpoint)) {   \
 			clear_##name##_report_info(watchpoint -                \

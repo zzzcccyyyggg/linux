@@ -161,7 +161,7 @@ static void fat_cache_add(struct inode *inode, struct fat_cache_id *new)
 			cache = fat_cache_merge(inode, new);
 			if (cache != NULL) {
 				MSDOS_I(inode)->nr_caches--;
-				fat_cache_free(tmp);
+				fat_cache_free(tmp); // [ZZZCCC] Free temporary cache when merging finds a duplicate.
 				goto out_update_lru;
 			}
 			cache = tmp;
@@ -193,7 +193,7 @@ static void __fat_cache_inval_inode(struct inode *inode)
 				   struct fat_cache, cache_list);
 		list_del_init(&cache->cache_list);
 		i->nr_caches--;
-		fat_cache_free(cache);
+		fat_cache_free(cache); // [ZZZCCC] Free all cache entries when invalidating inode cache.
 	}
 	/* Update. The copy of caches before this id is discarded. */
 	i->cache_valid_id++;
@@ -383,4 +383,13 @@ int fat_bmap(struct inode *inode, sector_t sector, sector_t *phys,
 
 	return fat_get_mapped_cluster(inode, sector, last_block, mapped_blocks,
 				      phys);
+}
+
+static void delayed_free(struct rcu_head *p)
+{
+    struct msdos_sb_info *sbi = container_of(p, struct msdos_sb_info, rcu);
+    unload_nls(sbi->nls_disk);
+    unload_nls(sbi->nls_io); 
+    fat_reset_iocharset(&sbi->options);
+    kfree(sbi); // Free msdos_sb_info structure in RCU callback.
 }

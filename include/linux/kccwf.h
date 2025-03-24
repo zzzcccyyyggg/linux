@@ -1,29 +1,17 @@
 #ifndef CONFIG_KCCWF
 #define CONFIG_KCCWF
+#include "linux/spinlock_types.h"
+#include <linux/atomic.h>
 #include <linux/types.h>
 #define MAX_LOG_ENTRIES 6553600 // 维持原条目数
 #define KCCWF_DEBUG 0
 #define TIME_MEASUREMENT 0
 
-#define KCCWF_MONITOR_ENABLE    BIT(0)  // 0x00000001
-#define KCCWF_LOG_ENABLE        BIT(1)  // 0x00000002
-#define KCCWF_RANDOM_ENABLE     BIT(2)  // 0x00000004
-#define KCCWF_VALIDATE_ENABLE   BIT(4)  
-/* 模式组合定义 (mode presets) */
 #define KCCWF_DISABLE_MODE      0x00000000
-#define KCCWF_MONITOR_MODE      KCCWF_MONITOR_ENABLE
-#define KCCWF_STABLE_SAMPLING  (KCCWF_MONITOR_ENABLE | KCCWF_LOG_ENABLE)
-#define KCCWF_RANDOM_SAMPLING  (KCCWF_MONITOR_ENABLE | KCCWF_RANDOM_ENABLE | KCCWF_LOG_ENABLE)
-#define KCCWF_VALIDATE_MODE    (KCCWF_MONITOR_ENABLE | KCCWF_RANDOM_ENABLE | KCCWF_VALIDATE_ENABLE)
-
-/* 功能检测宏 (feature check macros) */
-#define IS_MONITOR_ENABLED(mode)    ((mode) & KCCWF_MONITOR_ENABLE)
-#define IS_LOG_ENABLED(mode)        ((mode) & KCCWF_LOG_ENABLE)
-#define IS_RANDOM_ENABLED(mode)     ((mode) & KCCWF_RANDOM_ENABLE)
-
-#define TURN_OFF_LOG(mode)        ((mode) &= ~KCCWF_LOG_ENABLE)
-#define TURN_OFF_MONITOR(mode)    ((mode) &= ~KCCWF_MONITOR_ENABLE)
-#define TURN_OFF_RANDOM(mode)     ((mode) &= ~KCCWF_RANDOM_ENABLE)
+#define KCCWF_MONITOR_MODE      0x00000000
+#define KCCWF_LOG_MODE      0x1
+#define KCCWF_CHECK_MODE      0x2
+#define KCCWF_VALIDATE_MODE      0x3
 
 typedef struct delay_var
 {
@@ -41,7 +29,7 @@ extern int checking_sync_phase;
 extern int validating_phase;
 extern int kccwf_mode;
 
-void rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type);
+void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type);
 
 
 #include <linux/module.h>
@@ -56,14 +44,13 @@ void rec_mem_access(const volatile void *addr, unsigned long var_name, int is_wr
 #include <linux/delay.h>
 
 
-
-// 日志条目结构体（优化对齐）
+/* core.c */
 typedef struct __attribute__((aligned(64))) access_info {
     /* static info */
     int is_write;
     int file_line;
     pid_t tid;
-    int type;
+    int size;
     int delay_time;
     int is_skip;
     unsigned long var_name;
@@ -74,34 +61,60 @@ typedef struct __attribute__((aligned(64))) access_info {
     /* control info */
 } access_info_t;
 
-#define LOG_FILE "/var/log/mem_access.log"
-extern access_info_t **log_buffer;
-extern DEFINE_PER_CPU(int, kccwf_log_index);
-extern DEFINE_PER_CPU(int, head);
-extern DEFINE_PER_CPU(int, tail);
-extern atomic_t overflow_count;
+#define KCCWF_MAX_READ_ACCESS_INFOS 512000
+#define KCCWF_MAX_WRITE_ACCESS_INFOS 51200
+#define KCCWF_MAX_RACE_PAIRS 0X10000
+#define KCCWF_NO_SYNC_RACE_PAIRS 0X1000
+#define KCCWF_RACE_PAIRS_HAS_CHECKED 0X10000
+typedef struct __attribute__((aligned(64))) read_access_info {
+    pid_t tid;
+    unsigned long var_name;
+    const volatile void *var_addr;
+    unsigned long access_time;
+    unsigned long sn; // Serial Number
+    unsigned int size;
+} read_access_info_t;
 
-// 文件操作相关
-extern struct file *log_file;
+typedef struct __attribute__((aligned(64))) write_access_info {
+    pid_t tid;
+    const volatile void *var_addr;
+    unsigned long access_time;
+    unsigned int size;
+} write_access_info_t;
 
-extern struct task_struct *bg_thread;
-extern bool kccwf_log_file_clean;
-extern int is_log_init;
-int flush_logs(void *arg);
-void log_access_info(const access_info_t *var_access_info);
-void logger_init(void);
-void logger_exit(void);
-void clean_log(void);
+extern atomic64_t *kccwf_read_access_infos_sn;
+
+extern write_access_info_t *kccwf_write_access_buffer;
+extern unsigned int kccwf_write_access_buffer_head;
+extern unsigned int kccwf_write_access_buffer_tail;
+
+typedef struct __attribute__((aligned(64))) race_pair {
+    unsigned long read_name;
+    unsigned long sn;
+    // unsigned long free_name;
+    unsigned long interval_time;
+} race_pair_t;
+extern race_pair_t *kccwf_may_race_pairs;
+extern unsigned int kccwf_may_race_pairs_num;
+extern race_pair_t *kccwf_no_sync_race_pairs;
+extern unsigned int kccwf_no_sync_race_pairs_num;
 
 
+extern race_pair_t *kccwf_race_pairs_has_checked;
+extern unsigned int kccwf_race_pairs_has_checked_num;
+extern raw_spinlock_t kccwf_race_pairs_has_checked_lock;
+
+int kccwf_core_init(void);
+void kccwf_core_exit(void);
+/* core.c */
+
+
+// statistical variables
 extern atomic_long_t heap_count;
 extern atomic_long_t stack_count;
 
 extern atomic_long_t kccwf_read_count;
 extern atomic_long_t kccwf_write_count;
-
-
-// 统计变量
 
 extern atomic_long_t time_condition_check_total;
 extern atomic_long_t count_condition_check;
@@ -109,8 +122,34 @@ extern atomic_long_t time_preparing_stage;
 extern atomic_long_t count_preparing_stage;
 extern atomic_long_t time_watchpoint_processing_total;
 extern atomic_long_t count_watchpoint_processing_total;
+// statistical variables
 
-// BUCKET 
+/* core.c */
+
+/* timewindow_buffer.c */
+#define KCCWF_TIME_WINDOW   1000000000   // Time window threshold (nanoseconds)
+#define KCCWF_RING_BUFFER_SIZE    0x51200      // Ring buffer size
+typedef struct {
+    read_access_info_t records[KCCWF_RING_BUFFER_SIZE];
+    atomic_long_t head;
+    atomic_long_t tail;
+    
+    wait_queue_head_t wq;
+    spinlock_t lock;
+    spinlock_t read_acccess_lock;
+    struct task_struct *handler_thread;
+    bool thread_running;
+} TimeWindowBuffer;
+
+extern TimeWindowBuffer kccwf_access_twbuffer;
+
+int kccwf_access_twbuffer_init(void);
+void kccwf_access_twbuffer_clean(void);
+void log_read_access(read_access_info_t* read_access);
+
+/* timewindow_buffer.c */
+
+/* encoding.c */
 #define KCCWF_NUM_WATCHPOINTS 8192
 #define KCCWF_CHECK_ADJACENT 3
 #define NUM_SLOTS (1 + 2*KCCWF_CHECK_ADJACENT)
@@ -118,28 +157,18 @@ extern atomic_long_t count_watchpoint_processing_total;
 #define SLOT_IDX_FAST(slot, i) (slot + i)
 #define REAL_NUM_WATCHPOINTS (KCCWF_NUM_WATCHPOINTS + NUM_SLOTS - 1)
 
-// FIX ME REPLACE WITH A FAST HASH FUNCTION
+// [FIX ME] replace with a hash function that can be more efficient and able to avoid hash collisions
 static __always_inline int watchpoint_slot(unsigned long addr) {
     const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
     return (addr * A) % KCCWF_NUM_WATCHPOINTS;
 }
+/* encoding.c */
 
-
-// execution flow
-extern bool kccwf_exec_bbflow_enable;
-
-struct block_event {
-    u64 timestamp;
-    u64 block_id;
-    struct list_head list;
-};
-
-struct ccwf_percpu_bbflows {
-    struct block_event *buffer;     // 每个 CPU 独立的缓冲区
-    unsigned long count;            // 独立的计数器
-    unsigned long buffer_size;      // 缓冲区大小（按 block_event 数量计算）
-};
-
-void init_ccwf_event_list(void);
+/* func_call_monitor.c */
+#define KCCWF_THREADS_MONITORED 0x100000
+extern atomic_t kccwf_threads_monitored[KCCWF_THREADS_MONITORED];
+inline int func_call_monitor_init(void);
+inline void func_call_monitor_exit(void);
+/* func_call_monitor.c */
 
 #endif

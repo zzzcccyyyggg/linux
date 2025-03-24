@@ -391,7 +391,7 @@ void fat_truncate_blocks(struct inode *inode, loff_t offset)
 
 	nr_clusters = (offset + (cluster_size - 1)) >> sbi->cluster_bits;
 
-	fat_free(inode, nr_clusters);
+	fat_free(inode, nr_clusters); // [ZZZCCC] Free excess clusters when truncating a file.
 	fat_flush_inodes(inode->i_sb, inode, NULL);
 }
 

@@ -1096,7 +1096,7 @@ void start_kernel(void)
 	acpi_subsystem_init();
 	arch_post_acpi_subsys_init();
 	kcsan_init();
-
+	kccwf_core_init();
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 
