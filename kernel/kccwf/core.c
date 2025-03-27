@@ -1,53 +1,23 @@
 #include "core.h"
-#include "asm-generic/barrier.h"
 #include "encoding.h"
+#include "linux/atomic/atomic-instrumented.h"
 #include "linux/kccwf.h"
-#include "linux/printk.h"
-#include "linux/spinlock.h"
-#include "linux/spinlock_types.h"
+#include "linux/types.h"
+
 
 
 /* global variable */
-// 统计变量
-atomic_long_t kccwf_read_count = ATOMIC_INIT(0);
-atomic_long_t kccwf_write_count = ATOMIC_INIT(0);
-
-
-atomic_long_t heap_count;
-atomic_long_t stack_count;
-
-atomic_long_t time_condition_check_total = ATOMIC_LONG_INIT(0);
-atomic_long_t count_condition_check = ATOMIC_LONG_INIT(0);
-atomic_long_t time_preparing_stage = ATOMIC_LONG_INIT(0);
-atomic_long_t count_preparing_stage = ATOMIC_LONG_INIT(0);
-atomic_long_t time_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
-atomic_long_t count_watchpoint_processing_total = ATOMIC_LONG_INIT(0);
-// 统计变量
-
+kccwf_statistical_var_t kccwf_statistical_var;
+kccwf_current_t kccwf_current;
 atomic64_t *kccwf_read_access_infos_sn;
-write_access_info_t *kccwf_write_access_buffer;
-unsigned int kccwf_write_access_buffer_head;
-unsigned int kccwf_write_access_buffer_tail;
+kccwf_write_access_buffer_t kccwf_write_access_buffer;
 
-race_pair_t *kccwf_may_race_pairs;
-unsigned int kccwf_may_race_pairs_num;
 
-race_pair_t *kccwf_no_sync_race_pairs;
-unsigned int kccwf_no_sync_race_pairs_num;
-
-race_pair_t *kccwf_race_pairs_has_checked;
-unsigned int kccwf_race_pairs_has_checked_num;
-raw_spinlock_t kccwf_race_pairs_has_checked_lock;
 /* global variable */
 
 /* static global variable */
-static atomic_t may_race_pair_trigger_flag = ATOMIC_INIT(0);
-static atomic_t validate_race_pair_trigger_flag = ATOMIC_INIT(0);
 static atomic_long_t read_watchpoints[REAL_NUM_WATCHPOINTS];
 static atomic_long_t write_watchpoints[REAL_NUM_WATCHPOINTS];
-// This lock is to ensure the correct access order of write
-static raw_spinlock_t kccwf_write_access_buffer_lock;
-static unsigned long kccwf_write_access_buffer_lockflags;
 /* static global variable */
 
 /* function declare */
@@ -66,32 +36,16 @@ inline int kccwf_core_init(void){
 		goto fail_exit;
     }
 
-	kccwf_write_access_buffer = vzalloc(sizeof(write_access_info_t) * KCCWF_MAX_WRITE_ACCESS_INFOS);
-	if (!kccwf_write_access_buffer){
+	kccwf_write_access_buffer.kccwf_write_access_buffer = vzalloc(sizeof(write_access_info_t) * KCCWF_MAX_WRITE_ACCESS_INFOS);
+	if (!kccwf_write_access_buffer.kccwf_write_access_buffer){
 		printk(KERN_ERR "Failed to allocate memory for kccwf_write_access_buffer\n");
 		goto fail_exit;
     }
-	raw_spin_lock_init(&kccwf_write_access_buffer_lock);
+	raw_spin_lock_init(&kccwf_write_access_buffer.kccwf_write_access_buffer_lock);
+	kccwf_concurrent_pairs_init(&kccwf_concurrent_pairs);
 
-	kccwf_may_race_pairs = vzalloc(sizeof(race_pair_t) * KCCWF_MAX_RACE_PAIRS);
-	if (!kccwf_may_race_pairs){
-		printk(KERN_ERR "Failed to allocate memory for kccwf_may_race_pairs\n");
-		goto fail_exit;
-    }
-
-	kccwf_no_sync_race_pairs = vzalloc(sizeof(race_pair_t) * KCCWF_NO_SYNC_RACE_PAIRS);
-	if (!kccwf_no_sync_race_pairs){
-		printk(KERN_ERR "Failed to allocate memory for kccwf_no_sync_race_pairs\n");
-		goto fail_exit;
-    }
-
-	
-	kccwf_race_pairs_has_checked = vzalloc(sizeof(race_pair_t) * KCCWF_RACE_PAIRS_HAS_CHECKED);
-	if (!kccwf_race_pairs_has_checked){
-		printk(KERN_ERR "Failed to allocate memory for kccwf_race_pairs_has_checked\n");
-		goto fail_exit;
-    }
-	raw_spin_lock_init(&kccwf_race_pairs_has_checked_lock);
+	atomic_set(&kccwf_current.kccwf_validate_times, 0); 
+	kccwf_current.kccwf_mode = KCCWF_DISABLE_MODE;
 
     current->kccwf_disable_count--;
     return 0;
@@ -104,7 +58,7 @@ fail_exit:
 inline void kccwf_core_exit(void){
 	current->kccwf_disable_count++;
 	vfree(kccwf_read_access_infos_sn);
-	vfree(kccwf_write_access_buffer);
+	vfree(kccwf_write_access_buffer.kccwf_write_access_buffer);
 	current->kccwf_disable_count--;
 }
 
@@ -162,20 +116,20 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 
 	// condition checking part
 	if(TIME_MEASUREMENT) start = ktime_get();
-	if (current->kccwf_disable_count || !addr || kccwf_mode == KCCWF_DISABLE_MODE) {
+	if (current->kccwf_disable_count || !addr || kccwf_current.kccwf_mode == KCCWF_DISABLE_MODE) {
 		goto exit_label;
 	}
 	if (is_stack_pointer((unsigned long)addr)) {
-		if (KCCWF_DEBUG) atomic_long_inc(&stack_count);
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_statistical_var.stack_count);
 		goto exit_label;
 	}else {
-		if (KCCWF_DEBUG) atomic_long_inc(&heap_count);
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_statistical_var.heap_count);
 	}
 	if(TIME_MEASUREMENT){
 		end = ktime_get();
 		delta = ktime_to_ns(ktime_sub(end, start));
-		atomic_long_add(delta, &time_condition_check_total);
-		atomic_long_inc(&count_condition_check);
+		atomic_long_add(delta, &kccwf_statistical_var.time_condition_check_total);
+		atomic_long_inc(&kccwf_statistical_var.count_condition_check);
 	}
 
 	// preparation stage
@@ -189,10 +143,10 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 	if (TIME_MEASUREMENT){
 		end = ktime_get();
 		delta = ktime_to_ns(ktime_sub(end, start));
-		atomic_long_add(delta, &time_preparing_stage);
-		atomic_long_inc(&count_preparing_stage);
+		atomic_long_add(delta, &kccwf_statistical_var.time_preparing_stage);
+		atomic_long_inc(&kccwf_statistical_var.count_preparing_stage);
 	}
-	if(kccwf_mode == KCCWF_MONITOR_MODE){
+	if(kccwf_current.kccwf_mode == KCCWF_MONITOR_MODE){
 		if(get_random_u32_below(100) < DELAY_PROBABILITY){
             delay_time = get_random_u32_below(80);
         }else{
@@ -202,7 +156,7 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 	}
 	// log part
 	if (!is_write){
-		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_read_count);
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_statistical_var.kccwf_read_count);
 		read_access_info_t read_access_info = { 
 			.var_name = var_name,
 			.var_addr = addr,
@@ -211,72 +165,64 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 			.size = size,
 			.sn = sn
 		};
-		log_read_access(&read_access_info);
+		// [optimize me the following loop spend too much time, maybe we can use hash to improve it ] 不急 应该还好 主要的耗时还是在后面watchpoint的处理上
+		if (kccwf_current.kccwf_mode == KCCWF_LOG_MODE){
+			log_read_access(&read_access_info);
+			goto exit_label;
+		}else if(kccwf_current.kccwf_mode == KCCWF_VALIDATE_MODE){
+			// pr_info("The kccwf_may_race_pairs num is %d\n",kccwf_may_race_pairs_num);
+			int validate_times = atomic_fetch_inc(&kccwf_current.kccwf_validate_times);
+			if (validate_times < KCCWF_MAX_VALIDAE_TIMES){
+				goto exit_label;
+			}
+			race_pair_t *may_race_pair = kmalloc(sizeof(race_pair_t), GFP_KERNEL);
+			may_race_pair->read_name = var_name;
+			may_race_pair->sn = sn;
+			race_pair_entry_t *entry = kccwf_find_race_pair(&kccwf_concurrent_pairs.checked_race_list, 
+														&kccwf_concurrent_pairs.checked_race_lock, 
+														may_race_pair, 
+														kccwf_race_pair_cmp);
+			if (entry){
+				printk(KERN_INFO "The read_name %lu in sn %lu has validated\n",var_name,sn);
+				goto exit_label;
+			}
+			entry = kccwf_find_race_pair(&kccwf_concurrent_pairs.may_race_list, 
+				&kccwf_concurrent_pairs.may_race_lock, 
+				may_race_pair, 
+				kccwf_race_pair_cmp);
+			if (entry){
+				/* 插入到checked 并改变delay time */
+				kccwf_add_checked_race_pair(&kccwf_concurrent_pairs,may_race_pair);
+				printk(KERN_INFO "Validate read_name %lu in sn %lu\n",var_name,sn);
+				goto exit_label;
+			}
+		}
+		
 	}else {
-		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_write_count);
-		raw_spin_lock_irqsave(&kccwf_write_access_buffer_lock, kccwf_write_access_buffer_lockflags);
+		if (KCCWF_DEBUG) atomic_long_inc(&kccwf_statistical_var.kccwf_write_count);
+		raw_spin_lock_irqsave(&kccwf_write_access_buffer.kccwf_write_access_buffer_lock, kccwf_write_access_buffer.kccwf_write_access_buffer_lockflags);
 		// Ensure that the waiting queue is fully populated when running
-		unsigned int _tail = (kccwf_write_access_buffer_tail + 1); 
-		kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].access_time = ktime_get();
-		kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].tid = tid;
-		kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].var_addr = addr;
-		kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].size = size;
+		unsigned int _tail = (kccwf_write_access_buffer.kccwf_write_access_buffer_tail + 1); 
+		kccwf_write_access_buffer.kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].access_time = ktime_get();
+		kccwf_write_access_buffer.kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].tid = tid;
+		kccwf_write_access_buffer.kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].var_addr = addr;
+		kccwf_write_access_buffer.kccwf_write_access_buffer[_tail % KCCWF_MAX_WRITE_ACCESS_INFOS].size = size;
 		smp_mb();
-		kccwf_write_access_buffer_tail = _tail;
+		kccwf_write_access_buffer.kccwf_write_access_buffer_tail = _tail;
 		// printk(KERN_INFO "kccwf write,tail is %u\n",kccwf_write_access_buffer_tail);
-		raw_spin_unlock_irqrestore(&kccwf_write_access_buffer_lock, kccwf_write_access_buffer_lockflags);
 		wake_up(&kccwf_access_twbuffer.wq);
+		raw_spin_unlock_irqrestore(&kccwf_write_access_buffer.kccwf_write_access_buffer_lock, kccwf_write_access_buffer.kccwf_write_access_buffer_lockflags);
+		goto monitor;
 	}
-	if (kccwf_mode == KCCWF_LOG_MODE){
-		goto exit_label;
-	}else if(kccwf_mode == KCCWF_CHECK_MODE){
-		for (int i = 0;i < kccwf_race_pairs_has_checked_num;i++){
-			if (var_name == kccwf_race_pairs_has_checked[i].read_name){
-				if (sn == kccwf_race_pairs_has_checked[i].sn){
-					printk(KERN_INFO "The read_name %lu in sn %lu has checked\n",var_name,sn);
-					goto exit_label;
-				}
-			}
-		}
-		// pr_info("The kccwf_may_race_pairs num is %d\n",kccwf_may_race_pairs_num);
-		for (int i = 0;i < kccwf_may_race_pairs_num;i++){
-			if (var_name == kccwf_may_race_pairs[i].read_name){
-				if (sn == kccwf_may_race_pairs[i].sn){
-					delay_time = 2*kccwf_may_race_pairs[i].interval_time;
-				}
-			}
-		}
-	}else if(kccwf_mode == KCCWF_VALIDATE_MODE){
-		// pr_info("The kccwf_may_race_pairs num is %d\n",kccwf_may_race_pairs_num);
-		for (int i = 0;i < kccwf_race_pairs_has_checked_num;i++){
-			if (var_name == kccwf_race_pairs_has_checked[i].read_name){
-				if (sn == kccwf_race_pairs_has_checked[i].sn){
-					printk(KERN_INFO "The read_name %lu in sn %lu has validated\n",var_name,sn);
-					goto exit_label;
-				}
-			}
-		}
-		for (int i = 0;i < kccwf_no_sync_race_pairs_num;i++){
-			if (var_name == kccwf_no_sync_race_pairs[i].read_name){
-				if (sn == kccwf_no_sync_race_pairs[i].sn){
-					unsigned long flags = 0;
-					raw_spin_lock_irqsave(&kccwf_race_pairs_has_checked_lock, flags);
-					delay_time = 10*kccwf_no_sync_race_pairs[i].interval_time;
-					kccwf_race_pairs_has_checked[kccwf_race_pairs_has_checked_num].read_name = var_name;
-					kccwf_race_pairs_has_checked[kccwf_race_pairs_has_checked_num].sn = sn;
-					smp_mb();
-					kccwf_race_pairs_has_checked_num++;
-					printk(KERN_INFO "Validate read_name %lu in sn %ln\n",var_name,sn);
-					raw_spin_unlock_irqrestore(&kccwf_race_pairs_has_checked_lock, flags);
-				}
-			}
-		}
-	}
+
 	if (delay_time == 0){
 		goto exit_label;
 	}
 monitor:
-	// watch point part
+	// watch point processing part
+	if (!is_write)
+		start = ktime_get();
+	// printk(KERN_INFO "watch point processing part \n");
 	var_access_info.is_write = is_write;
 	var_access_info.file_line = file_line;
 	var_access_info.var_name = var_name;
@@ -294,6 +240,7 @@ monitor:
 		printk(KERN_INFO "kccwf_rec_mem_access: var_addr %lx int tid %d\n",(unsigned long)addr,tid);
 	}
 	if (is_write) {
+		// printk(KERN_INFO "kccwf_rec_mem_access: write var_addr %lx int tid %d\n",(unsigned long)addr,tid);
 		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
 			if (KCCWF_DEBUG) {
@@ -312,6 +259,7 @@ monitor:
 			}
 		}
 	} else {
+		// printk(KERN_INFO "kccwf_rec_mem_access: read var_addr %lx int tid %d\n",(unsigned long)addr,tid);
 		watchpoint = find_write_watchpoint(&var_access_info, &found_addr);
 		if (watchpoint) {
 			if (KCCWF_DEBUG) {
@@ -328,9 +276,16 @@ monitor:
 	if(TIME_MEASUREMENT){
 		end = ktime_get();
 		delta = ktime_to_ns(ktime_sub(end, start));
-		atomic_long_add(delta, &time_watchpoint_processing_total);
-		atomic_long_inc(&count_watchpoint_processing_total);
+		atomic_long_add(delta, &kccwf_statistical_var.time_watchpoint_processing_total);
+		atomic_long_inc(&kccwf_statistical_var.count_watchpoint_processing_total);
 	}
+	if (!is_write){
+		end = ktime_get();
+		delta = ktime_to_ns(ktime_sub(end, start));
+		printk(KERN_INFO "kccwf_rec_mem_access: read var_addr %lx int tid %d\n",(unsigned long)addr,tid);
+		printk(KERN_INFO "The total time is %lu and the delay time is %lu\n",delta,delay_time);
+	}
+
 exit_label:
 	local_irq_restore(irq_flags);
 }

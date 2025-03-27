@@ -1,16 +1,10 @@
 #include "delay_checker.h"
+#include "linux/atomic/atomic-instrumented.h"
 #include "linux/kccwf.h"
 
-
-int stable_logging_phase = 0;
-int random_delay_logging_phase = 1;
-int checking_sync_phase = 0;
-int validating_phase = 0;
-delay_var_t global_sync_delay[2];
-delay_var_t global_validate_delay[256];
-int is_log_init = 0;
 static void status_cleared(void){
 	memset(kccwf_read_access_infos_sn, 0, sizeof(atomic64_t) * KCCWF_MAX_READ_ACCESS_INFOS);
+	atomic_set(&kccwf_current.kccwf_validate_times, 0);
 	// atomic_long_set(&kccwf_access_twbuffer.head, 0);
 	// atomic_long_set(&kccwf_access_twbuffer.tail, 0);
 	// kccwf_write_access_buffer_head = 0;
@@ -34,30 +28,30 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 
 	switch (cmd) {
 	case TURN_OFF_KCCWF:
-		kccwf_mode = KCCWF_DISABLE_MODE;
+		kccwf_current.kccwf_mode = KCCWF_DISABLE_MODE;
 		printk(KERN_INFO
 			"[CHECKER_MONITOR] checker_monitor: TURN_OFF_KCCWF\n");
 		break;
 	case START_MONITOR:
-		kccwf_mode = KCCWF_MONITOR_MODE;
+		kccwf_current.kccwf_mode = KCCWF_MONITOR_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_MONITOR\n");
 		break;
 	case START_LOG_PHASE:
 		status_cleared();
-		kccwf_mode = KCCWF_LOG_MODE;
+		kccwf_current.kccwf_mode = KCCWF_LOG_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_LOG_PHASE\n");
 		break;
 	case START_CHECK_SYNC_PHASE:
 		status_cleared();
-		kccwf_mode = KCCWF_CHECK_MODE;
+		kccwf_current.kccwf_mode = KCCWF_CHECK_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_CHECK_SYNC_PHASE\n");
 		break;
 	case START_VALIDATE_PHASE:
 		status_cleared();
-		kccwf_mode = KCCWF_VALIDATE_MODE;
+		kccwf_current.kccwf_mode = KCCWF_VALIDATE_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_VALIDATE_PHASE\n");
 		break;
@@ -92,20 +86,20 @@ static const struct file_operations checker_fops = {
 static int proc_show_kccwf_stats(struct seq_file *m, void *v)
 {
 	seq_printf(m, "Condition Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_condition_check_total),
-		atomic_long_read(&count_condition_check),
-		atomic_long_read(&count_condition_check) ? 
-		atomic_long_read(&time_condition_check_total) / atomic_long_read(&count_condition_check) : 0);
+		atomic_long_read(&kccwf_statistical_var.time_condition_check_total),
+		atomic_long_read(&kccwf_statistical_var.count_condition_check),
+		atomic_long_read(&kccwf_statistical_var.count_condition_check) ? 
+		atomic_long_read(&kccwf_statistical_var.time_condition_check_total) / atomic_long_read(&kccwf_statistical_var.count_condition_check) : 0);
 	seq_printf(m, "Preparing Stage:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_preparing_stage),
-		atomic_long_read(&count_preparing_stage),
-		atomic_long_read(&count_preparing_stage) ? 
-		atomic_long_read(&time_preparing_stage) / atomic_long_read(&count_preparing_stage) : 0);
+		atomic_long_read(&kccwf_statistical_var.time_preparing_stage),
+		atomic_long_read(&kccwf_statistical_var.count_preparing_stage),
+		atomic_long_read(&kccwf_statistical_var.count_preparing_stage) ? 
+		atomic_long_read(&kccwf_statistical_var.time_preparing_stage) / atomic_long_read(&kccwf_statistical_var.count_preparing_stage) : 0);
 	seq_printf(m, "Watching Processsing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&time_watchpoint_processing_total),
-		atomic_long_read(&count_watchpoint_processing_total),
-		atomic_long_read(&count_watchpoint_processing_total) ? 
-		atomic_long_read(&time_watchpoint_processing_total) / atomic_long_read(&count_watchpoint_processing_total) : 0);
+		atomic_long_read(&kccwf_statistical_var.time_watchpoint_processing_total),
+		atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total),
+		atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total) ? 
+		atomic_long_read(&kccwf_statistical_var.time_watchpoint_processing_total) / atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total) : 0);
 	return 0;
 }
 

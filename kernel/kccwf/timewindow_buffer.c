@@ -57,26 +57,13 @@ void process_write_access(write_access_info_t *write_access_info) {
         if (rec->access_time > write_time) break;
         /* [Finish me]: Add the pair to the may_race_pairs */
         if (matching_access((unsigned long)rec->var_addr, rec->size, (unsigned long)write_access_info->var_addr, write_access_info->size) && rec->access_time > time_threshold && rec->tid != write_access_info->tid){
-            if (kccwf_mode == KCCWF_LOG_MODE){
-                kccwf_may_race_pairs[kccwf_may_race_pairs_num].interval_time = write_access_info->access_time - rec->access_time;
-                kccwf_may_race_pairs[kccwf_may_race_pairs_num].read_name = rec->var_name;
-                kccwf_may_race_pairs[kccwf_may_race_pairs_num].sn = rec->sn;
-                printk("the pos is %lu,the head is %d,the may race num is %lu\n",pos,current_tail,kccwf_may_race_pairs_num);
-                printk(KERN_INFO "#KCCWF_LOG_MODE# The read acccess var_name is %lu, addr is %lu,size is %d,the write addr is %lu,the write size is d %d,the interval_time is %lu,the sn is %lu",kccwf_may_race_pairs[kccwf_may_race_pairs_num].read_name,rec->var_addr,rec->size,write_access_info->var_addr,write_access_info->size,kccwf_may_race_pairs[kccwf_may_race_pairs_num].interval_time,kccwf_may_race_pairs[kccwf_may_race_pairs_num].sn);
-                smp_mb();
-                kccwf_may_race_pairs_num += 1;
-            }else if (kccwf_mode == KCCWF_CHECK_MODE) {
-                for(int i = 0;i < kccwf_may_race_pairs_num;i++){
-                    if (rec->var_name == kccwf_may_race_pairs[i].read_name && write_access_info->access_time - rec->access_time < 2*kccwf_may_race_pairs[i].interval_time){
-                        kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].interval_time = write_access_info->access_time - rec->access_time;
-                        kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].read_name = rec->var_name;
-                        kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].sn = rec->sn;
-                        printk(KERN_INFO "#KCCWF_CHECK_MODE# The read acccess var_name is %lu, addr is %lu,size is %d,the write addr is %lu,the write size is d %d,the interval_time is %lu,the sn is %lu",kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].read_name,rec->var_addr,rec->size,write_access_info->var_addr,write_access_info->size,kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].interval_time,kccwf_no_sync_race_pairs[kccwf_no_sync_race_pairs_num].sn);
-                        smp_mb();
-                        kccwf_no_sync_race_pairs_num += 1;
-                        break;
-                    }
-                }
+            if (kccwf_current.kccwf_mode == KCCWF_LOG_MODE){
+                race_pair_t *may_race_pair = kmalloc(sizeof(race_pair_t), GFP_KERNEL);
+                may_race_pair->interval_time = write_access_info->access_time - rec->access_time;
+                may_race_pair->read_name = rec->var_name;
+                may_race_pair->sn = rec->sn;
+                kccwf_add_may_race_pair(&kccwf_concurrent_pairs, may_race_pair);
+                printk(KERN_INFO "[KCCWF_LOG_MODE] The read acccess var_name is %lu, addr is %lx,size is %d,the write addr is %lu,the write size is d %d,the interval_time is %lu,the sn is %lu",rec->var_name,rec->var_addr,rec->size,write_access_info->var_addr,write_access_info->size,may_race_pair->interval_time,may_race_pair->sn);
             }
         }
         pos++;
@@ -89,9 +76,9 @@ exit:
 
 static int handler_thread_func(void *data) {
     while (kccwf_access_twbuffer.thread_running) {
-        wait_event(kccwf_access_twbuffer.wq, kccwf_write_access_buffer_head < kccwf_write_access_buffer_tail);
+        wait_event(kccwf_access_twbuffer.wq,kccwf_write_access_buffer.kccwf_write_access_buffer_head < kccwf_write_access_buffer.kccwf_write_access_buffer_tail);
         // printk("the kccwf_write_access_buffer_head is %u,kccwf_write_access_buffer_tail is %u\n",kccwf_write_access_buffer_head,kccwf_write_access_buffer_tail);
-        process_write_access(&kccwf_write_access_buffer[(++kccwf_write_access_buffer_head) % KCCWF_MAX_WRITE_ACCESS_INFOS]);
+        process_write_access(&kccwf_write_access_buffer.kccwf_write_access_buffer[(++kccwf_write_access_buffer.kccwf_write_access_buffer_head) % KCCWF_MAX_WRITE_ACCESS_INFOS]);
     }
     return 0;
 }
@@ -129,7 +116,7 @@ void log_read_access(read_access_info_t* read_access) {
     
     // 写入数据
     kccwf_access_twbuffer.records[write_pos].access_time = read_access->access_time;
-    kccwf_access_twbuffer.records[write_pos].sn = raw_atomic_long_read(&kccwf_read_access_infos_sn[read_access->var_name % KCCWF_MAX_READ_ACCESS_INFOS]);
+    kccwf_access_twbuffer.records[write_pos].sn = read_access->sn;
     kccwf_access_twbuffer.records[write_pos].tid = read_access->tid;
     kccwf_access_twbuffer.records[write_pos].var_addr = read_access->var_addr;
     kccwf_access_twbuffer.records[write_pos].var_name = read_access->var_name;

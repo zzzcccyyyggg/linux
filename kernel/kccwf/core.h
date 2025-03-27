@@ -132,10 +132,10 @@ extern int checker_start;
                                                                                \
 		int delay_time = var_access_info->delay_time;                  \
 		while (delay_time >= 2000) {                                   \
-			udelay(2000);                                          \
+			ndelay(2000);                                          \
 			delay_time -= 2000;                                    \
 		}                                                              \
-		udelay(delay_time);                                            \
+		ndelay(delay_time);                                            \
 		unsigned long temp = (unsigned long)var_access_info->var_addr; \
 		if (atomic_long_try_cmpxchg_relaxed(watchpoint,                \
 						    &enconded_watchpoint,      \

@@ -13,23 +13,7 @@
 #define KCCWF_CHECK_MODE      0x2
 #define KCCWF_VALIDATE_MODE      0x3
 
-typedef struct delay_var
-{
-    unsigned long var_name;
-    unsigned long call_stack_hash;
-    int delay_time;
-} delay_var_t;
 
-extern delay_var_t global_sync_delay[2];
-extern delay_var_t global_validate_delay[256];
-
-extern int stable_logging_phase;
-extern int random_delay_logging_phase;
-extern int checking_sync_phase;
-extern int validating_phase;
-extern int kccwf_mode;
-
-void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type);
 
 
 #include <linux/module.h>
@@ -45,6 +29,16 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name, int
 
 
 /* core.c */
+void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type);
+// The maximum number of verifications per test
+#define KCCWF_MAX_VALIDAE_TIMES 0X1
+typedef struct {
+    atomic_t kccwf_validate_times;
+    int kccwf_mode; 
+} kccwf_current_t;
+extern kccwf_current_t kccwf_current;
+
+
 typedef struct __attribute__((aligned(64))) access_info {
     /* static info */
     int is_write;
@@ -82,27 +76,57 @@ typedef struct __attribute__((aligned(64))) write_access_info {
     unsigned int size;
 } write_access_info_t;
 
+typedef struct {
+    write_access_info_t *kccwf_write_access_buffer;
+    unsigned int kccwf_write_access_buffer_head;
+    unsigned int kccwf_write_access_buffer_tail;
+    raw_spinlock_t kccwf_write_access_buffer_lock;
+    unsigned long kccwf_write_access_buffer_lockflags;
+} kccwf_write_access_buffer_t;
+extern kccwf_write_access_buffer_t kccwf_write_access_buffer;
+
 extern atomic64_t *kccwf_read_access_infos_sn;
 
-extern write_access_info_t *kccwf_write_access_buffer;
-extern unsigned int kccwf_write_access_buffer_head;
-extern unsigned int kccwf_write_access_buffer_tail;
+
 
 typedef struct __attribute__((aligned(64))) race_pair {
     unsigned long read_name;
     unsigned long sn;
-    // unsigned long free_name;
     unsigned long interval_time;
+    struct race_pair *next;
 } race_pair_t;
-extern race_pair_t *kccwf_may_race_pairs;
-extern unsigned int kccwf_may_race_pairs_num;
-extern race_pair_t *kccwf_no_sync_race_pairs;
-extern unsigned int kccwf_no_sync_race_pairs_num;
 
+typedef struct race_pair_entry {
+    race_pair_t race_pair;
+    struct list_head list;
+}race_pair_entry_t;
 
-extern race_pair_t *kccwf_race_pairs_has_checked;
-extern unsigned int kccwf_race_pairs_has_checked_num;
-extern raw_spinlock_t kccwf_race_pairs_has_checked_lock;
+typedef struct {
+    struct list_head may_race_list;
+    struct list_head no_sync_race_list;
+    struct list_head checked_race_list;
+    
+    spinlock_t may_race_lock;
+    spinlock_t no_sync_race_lock;
+    spinlock_t checked_race_lock;
+} kccwf_concurrent_pairs_t;
+
+void kccwf_concurrent_pairs_init(kccwf_concurrent_pairs_t *pairs);
+void kccwf_add_may_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair);
+void kccwf_add_checked_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair);
+struct race_pair_entry *kccwf_find_race_pair(
+    struct list_head *head, 
+    spinlock_t *lock,
+    const race_pair_t *target,
+    bool (*cmp)(const race_pair_t *, const race_pair_t *));
+void kccwf_remove_race_pair(
+    kccwf_concurrent_pairs_t *pairs, 
+    const race_pair_t *pair,
+    bool (*cmp)(const race_pair_t *, const race_pair_t *));
+bool kccwf_race_pair_cmp(const race_pair_t *a, const race_pair_t *b);
+
+extern kccwf_concurrent_pairs_t kccwf_concurrent_pairs;
+
 
 int kccwf_core_init(void);
 void kccwf_core_exit(void);
@@ -110,18 +134,23 @@ void kccwf_core_exit(void);
 
 
 // statistical variables
-extern atomic_long_t heap_count;
-extern atomic_long_t stack_count;
+typedef struct kccwf_statistical_var
+{
+    atomic_long_t heap_count;
+    atomic_long_t stack_count;
 
-extern atomic_long_t kccwf_read_count;
-extern atomic_long_t kccwf_write_count;
+    atomic_long_t kccwf_read_count;
+    atomic_long_t kccwf_write_count;
 
-extern atomic_long_t time_condition_check_total;
-extern atomic_long_t count_condition_check;
-extern atomic_long_t time_preparing_stage;
-extern atomic_long_t count_preparing_stage;
-extern atomic_long_t time_watchpoint_processing_total;
-extern atomic_long_t count_watchpoint_processing_total;
+    atomic_long_t time_condition_check_total;
+    atomic_long_t count_condition_check;
+    atomic_long_t time_preparing_stage;
+    atomic_long_t count_preparing_stage;
+    atomic_long_t time_watchpoint_processing_total;
+    atomic_long_t count_watchpoint_processing_total;
+} kccwf_statistical_var_t;
+extern kccwf_statistical_var_t kccwf_statistical_var;
+
 // statistical variables
 
 /* core.c */
