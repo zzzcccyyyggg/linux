@@ -70,6 +70,10 @@ bool kccwf_race_pair_cmp(const race_pair_t *a, const race_pair_t *b) {
            a->sn == b->sn;
 }
 
+bool kccwf_race_pair_cmp_by_varname(const race_pair_t *a, const race_pair_t *b){
+    return a->read_name == b->read_name;
+}
+
 void kccwf_remove_race_pair(
     kccwf_concurrent_pairs_t *pairs, 
     const race_pair_t *pair,

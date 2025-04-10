@@ -7,7 +7,8 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 #include <linux/kccwf.h>
-
+#include <linux/stacktrace.h>
+#include <asm/unwind.h>
 /*
 Treat "reading" as a producer and "writing" as a consumer. 
 Since the number of consumers is much larger than that of producers, 
@@ -63,14 +64,14 @@ void process_write_access(write_access_info_t *write_access_info) {
                 may_race_pair->read_name = rec->var_name;
                 may_race_pair->sn = rec->sn;
                 kccwf_add_may_race_pair(&kccwf_concurrent_pairs, may_race_pair);
-                printk(KERN_INFO "[KCCWF_LOG_MODE] The read acccess var_name is %lu, addr is %lx,size is %d,the write addr is %lu,the write size is d %d,the interval_time is %lu,the sn is %lu",rec->var_name,rec->var_addr,rec->size,write_access_info->var_addr,write_access_info->size,may_race_pair->interval_time,may_race_pair->sn);
+                printk(KERN_INFO "[KCCWF_LOG_MODE] The read acccess var_name is %lu, addr is %lx,size is %d,the write addr is %lx,the write size is d %d,the interval_time is %lu,the sn is %lu,line num is %d,block num is %d\n",rec->var_name,rec->var_addr,rec->size,write_access_info->var_addr,write_access_info->size,may_race_pair->interval_time,may_race_pair->sn,(rec->file_line >> 16) && 0xffff,(rec->file_line) && 0xffff);
             }
         }
         pos++;
     }
 
 exit:
-    raw_atomic_long_set(&kccwf_access_twbuffer.head, (long)pos);
+    raw_atomic_long_set(&kccwf_access_twbuffer.head, (long)valid_start);
     spin_unlock_irqrestore(&kccwf_access_twbuffer.lock, flags);
 }
 
@@ -121,4 +122,5 @@ void log_read_access(read_access_info_t* read_access) {
     kccwf_access_twbuffer.records[write_pos].var_addr = read_access->var_addr;
     kccwf_access_twbuffer.records[write_pos].var_name = read_access->var_name;
     kccwf_access_twbuffer.records[write_pos].size = read_access->size;
+    kccwf_access_twbuffer.records[write_pos].file_line = read_access->file_line;
 }

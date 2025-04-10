@@ -2,6 +2,7 @@
 #include "encoding.h"
 #include "linux/atomic/atomic-instrumented.h"
 #include "linux/kccwf.h"
+#include "linux/printk.h"
 #include "linux/types.h"
 
 
@@ -163,7 +164,8 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 			.access_time = access_time,
 			.tid = tid,
 			.size = size,
-			.sn = sn
+			.sn = sn,
+			.file_line = file_line,
 		};
 		// [optimize me the following loop spend too much time, maybe we can use hash to improve it ] 不急 应该还好 主要的耗时还是在后面watchpoint的处理上
 		if (kccwf_current.kccwf_mode == KCCWF_LOG_MODE){
@@ -171,8 +173,8 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 			goto exit_label;
 		}else if(kccwf_current.kccwf_mode == KCCWF_VALIDATE_MODE){
 			// pr_info("The kccwf_may_race_pairs num is %d\n",kccwf_may_race_pairs_num);
-			int validate_times = atomic_fetch_inc(&kccwf_current.kccwf_validate_times);
-			if (validate_times < KCCWF_MAX_VALIDAE_TIMES){
+
+			if (atomic_read(&kccwf_current.kccwf_validate_times) > KCCWF_MAX_VALIDAE_TIMES){
 				goto exit_label;
 			}
 			race_pair_t *may_race_pair = kmalloc(sizeof(race_pair_t), GFP_KERNEL);
@@ -181,7 +183,7 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 			race_pair_entry_t *entry = kccwf_find_race_pair(&kccwf_concurrent_pairs.checked_race_list, 
 														&kccwf_concurrent_pairs.checked_race_lock, 
 														may_race_pair, 
-														kccwf_race_pair_cmp);
+														kccwf_race_pair_cmp_by_varname);
 			if (entry){
 				printk(KERN_INFO "The read_name %lu in sn %lu has validated\n",var_name,sn);
 				goto exit_label;
@@ -191,10 +193,16 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 				may_race_pair, 
 				kccwf_race_pair_cmp);
 			if (entry){
+				int validate_times = atomic_fetch_inc(&kccwf_current.kccwf_validate_times);
+				// printk(KERN_INFO "The validate_times %d\n",validate_times);
+				if (validate_times >= KCCWF_MAX_VALIDAE_TIMES){
+					goto exit_label;
+				}
 				/* 插入到checked 并改变delay time */
 				kccwf_add_checked_race_pair(&kccwf_concurrent_pairs,may_race_pair);
+				delay_time = 1000000;
 				printk(KERN_INFO "Validate read_name %lu in sn %lu\n",var_name,sn);
-				goto exit_label;
+				goto monitor;
 			}
 		}
 		
@@ -212,6 +220,7 @@ void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name,int 
 		// printk(KERN_INFO "kccwf write,tail is %u\n",kccwf_write_access_buffer_tail);
 		wake_up(&kccwf_access_twbuffer.wq);
 		raw_spin_unlock_irqrestore(&kccwf_write_access_buffer.kccwf_write_access_buffer_lock, kccwf_write_access_buffer.kccwf_write_access_buffer_lockflags);
+		delay_time = 0;
 		goto monitor;
 	}
 

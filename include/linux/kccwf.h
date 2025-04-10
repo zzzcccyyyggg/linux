@@ -67,6 +67,7 @@ typedef struct __attribute__((aligned(64))) read_access_info {
     unsigned long access_time;
     unsigned long sn; // Serial Number
     unsigned int size;
+    int file_line;
 } read_access_info_t;
 
 typedef struct __attribute__((aligned(64))) write_access_info {
@@ -124,7 +125,7 @@ void kccwf_remove_race_pair(
     const race_pair_t *pair,
     bool (*cmp)(const race_pair_t *, const race_pair_t *));
 bool kccwf_race_pair_cmp(const race_pair_t *a, const race_pair_t *b);
-
+bool kccwf_race_pair_cmp_by_varname(const race_pair_t *a, const race_pair_t *b);
 extern kccwf_concurrent_pairs_t kccwf_concurrent_pairs;
 
 
@@ -156,7 +157,7 @@ extern kccwf_statistical_var_t kccwf_statistical_var;
 /* core.c */
 
 /* timewindow_buffer.c */
-#define KCCWF_TIME_WINDOW   1000000000   // Time window threshold (nanoseconds)
+#define KCCWF_TIME_WINDOW   100000   // Time window threshold (nanoseconds)
 #define KCCWF_RING_BUFFER_SIZE    0x51200      // Ring buffer size
 typedef struct {
     read_access_info_t records[KCCWF_RING_BUFFER_SIZE];
