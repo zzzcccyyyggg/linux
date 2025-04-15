@@ -4120,9 +4120,17 @@ bool slab_post_alloc_hook(struct kmem_cache *s, struct list_lru *lru,
 	 */
 	for (i = 0; i < size; i++) {
 		p[i] = kasan_slab_alloc(s, p[i], init_flags, kasan_init);
-		if (p[i] && init && (!kasan_init ||
-				     !kasan_has_integrated_init()))
-			memset(p[i], 0, zero_size);
+		
+		if (p[i]){
+			// kccwf_hook_alloc
+			// if(kccwf_current.kccwf_mode == KCCWF_LOG_MODE)
+				// pr_info("SLAB Allocated: VA = %px, Size = %u (Cache: %s)\n", p[i], s->object_size, s->name);
+			// kccwf_hook_alloc
+			if(init && (!kasan_init ||
+				!kasan_has_integrated_init())){
+					memset(p[i], 0, zero_size);
+				}
+		}	
 		kmemleak_alloc_recursive(p[i], s->object_size, 1,
 					 s->flags, init_flags);
 		kmsan_slab_alloc(s, p[i], init_flags);

@@ -1566,6 +1566,15 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
 {
 	post_alloc_hook(page, order, gfp_flags);
 
+	// kccwf_hook_alloc
+	// void *vaddr = page_address(page);         // 获取虚拟地址
+	// size_t size = (1UL << order) * PAGE_SIZE; // 计算内存块大小（字节）
+	// if (vaddr && kccwf_current.kccwf_mode == KCCWF_LOG_MODE) {
+	// 	pr_info("Allocated: VA = %px, Size = %zu (order=%u)\n", 
+	// 			vaddr, size, order);
+	// }
+	// kccwf_hook_alloc
+
 	if (order && (gfp_flags & __GFP_COMP))
 		prep_compound_page(page, order);
 

@@ -12,7 +12,7 @@
 /* report info */
 
 typedef struct report_info {
-	unsigned long stack_entries[NUM_STACK_ENTRIES];
+	unsigned long stack_entries[KCCWF_NUM_STACK_ENTRIES];
 	int num_entries;
 	struct task_struct *task;
 	unsigned long hash;

@@ -26,12 +26,38 @@
 #include <linux/mutex.h>
 #include <linux/timer.h>
 #include <linux/delay.h>
+#include <linux/kallsyms.h>
+/* report.h */
+#define KCCWF_NUM_STACK_ENTRIES 0x40
 
+/* tracker.c*/
+#define MAX_STACK_ENTRIES_PER_SLOT 8
+
+typedef struct kccwf_stack_entry {
+    unsigned long stack_hash;
+    atomic64_t access_count;
+    struct list_head list;
+}kccwf_stack_entry_t;
+
+typedef struct kccwf_sn_info {
+    struct list_head stack_list;
+    spinlock_t lock;
+    unsigned int entry_count;     // 当前槽位的条目数（用于限制）
+} kccwf_sn_info_t;
+
+extern kccwf_sn_info_t *kccwf_read_access_infos_sn;
+
+static inline unsigned long calc_stack_hash(unsigned long *stack, int stack_size);
+struct kccwf_stack_entry *kccwf_find_stack(unsigned long var_name, unsigned long *stack, unsigned int stack_size);
+long kccwf_increment_access(unsigned long var_name, unsigned long *stack, unsigned int stack_size);
+unsigned long kccwf_fetch_inc_stack_sn(unsigned long var_name,unsigned long *stack, unsigned int stack_size);
+
+/* tracker.c */
 
 /* core.c */
 void kccwf_rec_mem_access(const volatile void *addr, unsigned long var_name, int is_write, int file_line, int type);
 // The maximum number of verifications per test
-#define KCCWF_MAX_VALIDAE_TIMES 0X1
+#define KCCWF_MAX_VALIDAE_TIMES 0X1000
 typedef struct {
     atomic_t kccwf_validate_times;
     int kccwf_mode; 
@@ -68,6 +94,9 @@ typedef struct __attribute__((aligned(64))) read_access_info {
     unsigned long sn; // Serial Number
     unsigned int size;
     int file_line;
+    unsigned long stack_entries[KCCWF_NUM_STACK_ENTRIES];
+	int num_entries;
+    bool is_alive;
 } read_access_info_t;
 
 typedef struct __attribute__((aligned(64))) write_access_info {
@@ -75,6 +104,8 @@ typedef struct __attribute__((aligned(64))) write_access_info {
     const volatile void *var_addr;
     unsigned long access_time;
     unsigned int size;
+    unsigned long stack_entries[KCCWF_NUM_STACK_ENTRIES];
+	int num_entries;
 } write_access_info_t;
 
 typedef struct {
@@ -86,14 +117,14 @@ typedef struct {
 } kccwf_write_access_buffer_t;
 extern kccwf_write_access_buffer_t kccwf_write_access_buffer;
 
-extern atomic64_t *kccwf_read_access_infos_sn;
-
 
 
 typedef struct __attribute__((aligned(64))) race_pair {
     unsigned long read_name;
     unsigned long sn;
     unsigned long interval_time;
+    unsigned long murmur_hash;
+    char funcname_w[KSYM_SYMBOL_LEN];
     struct race_pair *next;
 } race_pair_t;
 
@@ -113,7 +144,7 @@ typedef struct {
 } kccwf_concurrent_pairs_t;
 
 void kccwf_concurrent_pairs_init(kccwf_concurrent_pairs_t *pairs);
-void kccwf_add_may_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair);
+bool kccwf_add_may_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair);
 void kccwf_add_checked_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair);
 struct race_pair_entry *kccwf_find_race_pair(
     struct list_head *head, 
@@ -126,6 +157,8 @@ void kccwf_remove_race_pair(
     bool (*cmp)(const race_pair_t *, const race_pair_t *));
 bool kccwf_race_pair_cmp(const race_pair_t *a, const race_pair_t *b);
 bool kccwf_race_pair_cmp_by_varname(const race_pair_t *a, const race_pair_t *b);
+bool kccwf_race_pair_cmp_by_funcname_and_varname(const race_pair_t *a, const race_pair_t *b);
+
 extern kccwf_concurrent_pairs_t kccwf_concurrent_pairs;
 
 
@@ -157,7 +190,7 @@ extern kccwf_statistical_var_t kccwf_statistical_var;
 /* core.c */
 
 /* timewindow_buffer.c */
-#define KCCWF_TIME_WINDOW   100000   // Time window threshold (nanoseconds)
+#define KCCWF_TIME_WINDOW   1000000   // Time window threshold (nanoseconds)
 #define KCCWF_RING_BUFFER_SIZE    0x51200      // Ring buffer size
 typedef struct {
     read_access_info_t records[KCCWF_RING_BUFFER_SIZE];
@@ -176,7 +209,7 @@ extern TimeWindowBuffer kccwf_access_twbuffer;
 int kccwf_access_twbuffer_init(void);
 void kccwf_access_twbuffer_clean(void);
 void log_read_access(read_access_info_t* read_access);
-
+void kccwf_process_write_access(write_access_info_t *write_access_info);
 /* timewindow_buffer.c */
 
 /* encoding.c */
@@ -200,5 +233,6 @@ extern atomic_t kccwf_threads_monitored[KCCWF_THREADS_MONITORED];
 inline int func_call_monitor_init(void);
 inline void func_call_monitor_exit(void);
 /* func_call_monitor.c */
+
 
 #endif

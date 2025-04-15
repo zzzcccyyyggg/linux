@@ -1,3 +1,4 @@
+#include "linux/stddef.h"
 #include <linux/kccwf.h>
 
 kccwf_concurrent_pairs_t kccwf_concurrent_pairs;
@@ -14,9 +15,35 @@ static void list_add_safe(struct list_head *head,
     spin_unlock_irqrestore(lock, flags);
 }
 
-void kccwf_add_may_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair)
-{
-    list_add_safe(&pairs->may_race_list, pair, &pairs->may_race_lock);
+// [Opt me!]: Simple deduplication method is only reasonable when the number of may race_pairs is small.
+bool kccwf_add_may_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair) {
+    unsigned long flags;
+    bool duplicate = false;
+    struct race_pair_entry *entry;
+    spin_lock_irqsave(&pairs->may_race_lock, flags);
+    list_for_each_entry(entry, &pairs->may_race_list, list) {
+        if (kccwf_race_pair_cmp_by_funcname_and_varname(&entry->race_pair, pair)) {
+            duplicate = true;
+            break;
+        }
+    }
+    if (!duplicate) {
+        struct race_pair_entry *new_entry = kmalloc(sizeof(*new_entry), GFP_ATOMIC);
+        if (new_entry) {
+            new_entry->race_pair = *pair; // 复制 race_pair 内容
+            list_add_tail(&new_entry->list, &pairs->may_race_list);
+        }
+    }
+    spin_unlock_irqrestore(&pairs->may_race_lock, flags);
+    if (duplicate) {
+        current->kccwf_disable_count++;
+        kfree(pair);
+        current->kccwf_disable_count--;
+        pr_info("Duplicate race_pair skipped: read_name=%lu, funcname_w=%s\n", 
+                pair->read_name, pair->funcname_w);
+        return false;
+    }
+    return true;
 }
 
 void kccwf_add_checked_race_pair(kccwf_concurrent_pairs_t *pairs, race_pair_t *pair)
@@ -58,7 +85,9 @@ static void delete_race_pair(
     list_for_each_entry_safe(pos, n, head, list) {
         if (cmp(&pos->race_pair, target)) {
             list_del(&pos->list);    // 从链表移除
+            current->kccwf_disable_count++;
             kfree(pos);             // 释放内存
+            current->kccwf_disable_count--;
             break;
         }
     }
@@ -72,6 +101,11 @@ bool kccwf_race_pair_cmp(const race_pair_t *a, const race_pair_t *b) {
 
 bool kccwf_race_pair_cmp_by_varname(const race_pair_t *a, const race_pair_t *b){
     return a->read_name == b->read_name;
+}
+
+bool kccwf_race_pair_cmp_by_funcname_and_varname(const race_pair_t *a, const race_pair_t *b) {
+    return (a->read_name == b->read_name) && 
+           (strcmp(a->funcname_w, b->funcname_w) == 0);
 }
 
 void kccwf_remove_race_pair(
