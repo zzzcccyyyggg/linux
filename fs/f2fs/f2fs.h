@@ -8,6 +8,7 @@
 #ifndef _LINUX_F2FS_H
 #define _LINUX_F2FS_H
 
+#include "linux/compiler.h"
 #include <linux/uio.h>
 #include <linux/types.h>
 #include <linux/page-flags.h>

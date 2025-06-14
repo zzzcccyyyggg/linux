@@ -3,6 +3,7 @@
  * Copyright (C) 2009 Oracle.  All rights reserved.
  */
 
+#include "linux/compiler.h"
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/sort.h>

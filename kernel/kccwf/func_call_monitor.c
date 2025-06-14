@@ -1,5 +1,5 @@
 // [Optimize me]: some functions exit may not call which may lead to the some thread legacy in the kccwf_threads_monitored
-#include "linux/types.h"
+#include "tracker.h"
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -15,14 +15,14 @@ atomic_t kccwf_threads_monitored[KCCWF_THREADS_MONITORED];
 /* static globale variable */
 
 inline int func_call_monitor_init(void){
-    current->kccwf_disable_count++;
-    current->kccwf_disable_count--;
+    kccwf_enable();
+    kccwf_disable();
     return 0;
 }
 
 inline void func_call_monitor_exit(void){
-    current->kccwf_disable_count++;
-    current->kccwf_disable_count--;
+    kccwf_enable();
+    kccwf_disable();
 }
 
 void kccwf_rec_func_enter(unsigned long func_name,char func_line) {
@@ -32,6 +32,7 @@ void kccwf_rec_func_enter(unsigned long func_name,char func_line) {
     current->kccwf_disable_count++;
     pid_t tid = current->pid;
     atomic_inc(&kccwf_threads_monitored[tid % KCCWF_THREADS_MONITORED]);
+    // add_tracker(tid);
     current->kccwf_disable_count--;
 }
 EXPORT_SYMBOL(kccwf_rec_func_enter);

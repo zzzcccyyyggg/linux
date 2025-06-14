@@ -1,6 +1,7 @@
-#ifndef REPORT_H
-#define REPORT_H
+#ifndef KCCWF_REPORT_H
+#define KCCWF_REPORT_H
 
+#include "encoding.h"
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -8,122 +9,45 @@
 #include <asm/unwind.h>
 #include <linux/kccwf.h>
 #define NUM_STACK_ENTRIES 0x40
-
-/* report info */
-
+#define MAX_REPORTED_NUM 0X100
 typedef struct report_info {
-	unsigned long stack_entries[KCCWF_NUM_STACK_ENTRIES];
+	unsigned long stack_entries[NUM_STACK_ENTRIES];
 	int num_entries;
 	struct task_struct *task;
 	unsigned long hash;
 	unsigned long var_name;
-	int file_line; // in ir file
-    int tid;
+	int file_line;
+	int tid;
 	int cpu;
 } report_info_t;
 
-typedef struct reported {
+void set_report_info(report_info_t *report_infos, raw_spinlock_t *report_lock,
+		     const volatile void *addr, int is_write,
+		     int watchpoint_idx, int file_line, unsigned long var_name,
+		     int tid, int cpu);
+
+void clear_report_info(report_info_t *report_infos, int watchpoint_idx);
+
+typedef struct reported_pairs {
 	unsigned long name_1;
 	unsigned long name_2;
-	int line_1;
-	int line_2;
-} reported_t;
+} reported_pairs_t;
 
-static DEFINE_RAW_SPINLOCK(report_lock);
+typedef struct reported_info {
+	reported_pairs_t reported_pairs[REAL_NUM_WATCHPOINTS];
+	raw_spinlock_t lock;
+	unsigned long flags;
+	int count;
+} reported_info_t;
+void report_race(report_info_t *report_infos, reported_info_t *report_info,
+		 const volatile void *addr, int is_write, int watchpoint_idx,
+		 unsigned long var_name, int file_line, char *report_type);
 
-static report_info_t read_report_infos[REAL_NUM_WATCHPOINTS];
-static DEFINE_RAW_SPINLOCK(read_report_lock);
+void push_reported(reported_info_t *report_info, unsigned long name_1,
+		   unsigned long name_2);
+bool check_reported(reported_info_t *report_info, unsigned long name_1,
+		    unsigned long name_2);
 
-static report_info_t write_report_infos[REAL_NUM_WATCHPOINTS];
-static DEFINE_RAW_SPINLOCK(write_report_lock);
-
-static reported_t reported_funcs[REAL_NUM_WATCHPOINTS];
-static reported_t unknown_reported_funcs[REAL_NUM_WATCHPOINTS];
-static DEFINE_RAW_SPINLOCK(reported_lock);
-
-void set_read_report_info(const volatile void *addr, int is_write,
-			  int watchpoint_idx, int file_line,
-			  unsigned long var_name, int tid, int cpu);
-void set_write_report_info(const volatile void *addr, int is_write,
-			   int watchpoint_idx, int file_line,
-			   unsigned long var_name, int tid, int cpu);
-void set_free_report_info(const volatile void *addr, int is_write,
-			  int watchpoint_idx, int file_line,
-			  unsigned long var_name);
-void read_report_race(const volatile void *addr, int is_write,
-		      int watchpoint_idx, unsigned long func_name,
-		      int file_line);
-void write_report_race(const volatile void *addr, int is_write,
-		       int watchpoint_idx, unsigned long func_name,
-		       int file_line);
-void clear_read_report_info(int watchpoint_idx);
-void clear_write_report_info(int watchpoint_idx);
-
-#define DEFINE_SET_REPORT_INFO_FUNCTION(name, report_infos_array)              \
-	void set_##name##_report_info(const volatile void *addr, int is_write, \
-				      int watchpoint_idx, int file_line,       \
-				      unsigned long var_name, int tid,         \
-				      int cpu)                                 \
-	{                                                                      \
-		unsigned long flags;                                           \
-		raw_spin_lock_irqsave(&report_lock, flags);                    \
-		struct task_struct *task = current;                            \
-		report_infos_array[watchpoint_idx].task = task;                \
-		report_infos_array[watchpoint_idx].num_entries =               \
-			stack_trace_save(report_infos_array[watchpoint_idx]    \
-						 .stack_entries,               \
-					 NUM_STACK_ENTRIES, 0);                \
-		report_infos_array[watchpoint_idx].file_line = file_line;      \
-		report_infos_array[watchpoint_idx].var_name = var_name;        \
-		report_infos_array[watchpoint_idx].tid = tid;                  \
-		report_infos_array[watchpoint_idx].cpu = cpu;                  \
-		raw_spin_unlock_irqrestore(&report_lock, flags);               \
-	}
-
-#define DEFINE_REPORT_RACE_FUNCTION(name, report_infos_array, report_type)                         \
-	void name##_report_race(const volatile void *addr, int is_write,                           \
-				int watchpoint_idx, unsigned long func_name,                       \
-				int file_line)                                                     \
-	{                                                                                          \
-		struct task_struct *task = current;                                                \
-		struct unwind_state state;                                                         \
-		unsigned long address;                                                             \
-                                                                                                   \
-		if (check_reported(                                                                \
-			    func_name, file_line,                                                  \
-			    report_infos_array[watchpoint_idx].var_name,                           \
-			    report_infos_array[watchpoint_idx].file_line)) {                       \
-			return;                                                                    \
-		}                                                                                  \
-                                                                                                   \
-		printk(KERN_INFO "Kernel panic: %s", report_type);                                 \
-		printk(KERN_INFO                                                                   \
-		       "VarName %llu, BlockLineNumber %d, IrLineNumber %d, is write %d\n",         \
-		       func_name, ((file_line >> 16) & 0xffff),                                    \
-		       (file_line & 0xffff), is_write);                                            \
-		for (unwind_start(&state, task, NULL, NULL);                                       \
-		     !unwind_done(&state); unwind_next_frame(&state)) {                            \
-			address = unwind_get_return_address(&state);                               \
-			printk(KERN_INFO "Function: %pS\n", (void *)address);                      \
-		}                                                                                  \
-		printk(KERN_INFO "============OTHER_INFO============\n");                          \
-		printk(KERN_INFO                                                                   \
-		       "VarName %llu, BlockLineNumber %d, IrLineNumber %d, watchpoint index %d\n", \
-		       report_infos_array[watchpoint_idx].var_name,                                \
-		       ((report_infos_array[watchpoint_idx].file_line >> 16) &                     \
-			0xffff),                                                                   \
-		       (report_infos_array[watchpoint_idx].file_line &                             \
-			0xffff),                                                                   \
-		       watchpoint_idx);                                                            \
-		stack_trace_print(                                                                 \
-			report_infos_array[watchpoint_idx].stack_entries,                          \
-			report_infos_array[watchpoint_idx].num_entries, 0);                        \
-		printk(KERN_INFO "=================================\n");                           \
-                                                                                                   \
-		push_reported(func_name, file_line,                                                \
-			      report_infos_array[watchpoint_idx].var_name,                         \
-			      report_infos_array[watchpoint_idx].file_line);                       \
-		return;                                                                            \
-	}
-
+void kccwf_report_init(unsigned long *recorded_pair, int num,
+		       reported_info_t *reported_info);
 #endif // REPORT_H

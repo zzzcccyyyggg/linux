@@ -624,7 +624,7 @@ void __init security_add_hooks(struct security_hook_list *hooks, int count,
 	 */
 	if (lsm_active_cnt == 0 || lsm_idlist[lsm_active_cnt - 1] != lsmid) {
 		if (lsm_active_cnt >= MAX_LSM_COUNT)
-			panic("%s Too many LSMs registered.\n", __func__);
+			panic("%s Too many LSMs registered.\nlsm_active_cnt %d,MAX_LSM_COUNT %d\n", __func__,lsm_active_cnt,MAX_LSM_COUNT);
 		lsm_idlist[lsm_active_cnt++] = lsmid;
 	}
 

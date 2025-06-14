@@ -1,6 +1,6 @@
 # obj-y := delay_checker.o report.o
 # obj-y := checker_monitor.o
-obj-y := delay_checker.o
+obj-y := ctl_dev.o
 
 ccflags-y += -g -Og -Wno-missing-prototypes -Wno-unused-variable -Wno-unused-function
 

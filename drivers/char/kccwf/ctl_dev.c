@@ -1,15 +1,7 @@
-#include "delay_checker.h"
-#include "linux/atomic/atomic-instrumented.h"
+#include "ctl_dev.h"
 #include "linux/kccwf.h"
+may_race_pair_list_t g_may_race_pair_list;
 
-static void status_cleared(void){
-	memset(kccwf_read_access_infos_sn, 0, sizeof(atomic64_t) * KCCWF_MAX_READ_ACCESS_INFOS);
-	atomic_set(&kccwf_current.kccwf_validate_times, 0);
-	// atomic_long_set(&kccwf_access_twbuffer.head, 0);
-	// atomic_long_set(&kccwf_access_twbuffer.tail, 0);
-	// kccwf_write_access_buffer_head = 0;
-	// kccwf_write_access_buffer_tail = 0;
-}
 static int checker_open(struct inode *inode, struct file *filp)
 {
 	return 0;
@@ -24,51 +16,85 @@ static long checker_ioctl(struct file *filp, unsigned int cmd,
 			  unsigned long arg)
 {
 	int ret;
-	long _write_count,_read_count,_heap_count,_stack_count;
+	long _write_count, _read_count, _heap_count, _stack_count;
 
 	switch (cmd) {
 	case TURN_OFF_KCCWF:
-		kccwf_current.kccwf_mode = KCCWF_DISABLE_MODE;
+		kccwf_current.mode = KCCWF_DISABLE_MODE;
 		printk(KERN_INFO
-			"[CHECKER_MONITOR] checker_monitor: TURN_OFF_KCCWF\n");
+		       "[CHECKER_MONITOR] checker_monitor: TURN_OFF_KCCWF\n");
 		break;
 	case START_MONITOR:
-		kccwf_current.kccwf_mode = KCCWF_MONITOR_MODE;
+		kccwf_current.mode = KCCWF_MONITOR_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_MONITOR\n");
 		break;
 	case START_LOG_PHASE:
-		status_cleared();
-		kccwf_current.kccwf_mode = KCCWF_LOG_MODE;
+		kccwf_current.mode = KCCWF_LOG_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_LOG_PHASE\n");
 		break;
 	case START_CHECK_SYNC_PHASE:
-		status_cleared();
-		kccwf_current.kccwf_mode = KCCWF_CHECK_MODE;
+		kccwf_current.mode = KCCWF_CHECK_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_CHECK_SYNC_PHASE\n");
 		break;
 	case START_VALIDATE_PHASE:
-		status_cleared();
-		kccwf_current.kccwf_mode = KCCWF_VALIDATE_MODE;
+		kccwf_current.mode = KCCWF_VALIDATE_MODE;
 		printk(KERN_INFO
 		       "[CHECKER_MONITOR] checker_monitor: START_VALIDATE_PHASE\n");
 		break;
-	// case: PRINT_INFO:
-	// 	if (KCCWF_DEBUG) {
-	// 		_write_count = atomic_long_read(&kccwf_write_count);
-	// 		_read_count = atomic_long_read(&kccwf_read_count);
-	// 		_stack_count = atomic_long_read(&stack_count);
-	// 		_heap_count = atomic_long_read(&heap_count);
-	// 		printk(KERN_INFO "[CHECKER_MONITOR] The write point access: %ld, the read point access %ld\n",_write_count,_read_count);
-	// 		printk(KERN_INFO "[CHECKER_MONITOR] Stack count: %ld, Heap count %ld\n",_stack_count,_heap_count);
-	// 		atomic_long_set(&kccwf_write_count, 0);
-	// 		atomic_long_set(&kccwf_read_count, 0);
-	// 		atomic_long_set(&stack_count, 0);
-	// 		atomic_long_set(&heap_count, 0);
-	// 	}
-	// 	break;
+	case MODIFY_TESTING_TID: {
+		kccwf_testing_tids_t tids;
+		if (copy_from_user(&tids, (kccwf_testing_tids_t *)arg,
+				   sizeof(kccwf_testing_tids_t))) {
+			return -EFAULT;
+		}
+		if (tids.num > KCCWF_MAX_TESTING_TID_NUM) {
+			return -EINVAL;
+		}
+		memcpy(kccwf_current.testing_tids.tids, tids.tids,
+		       sizeof(tids.tids));
+		kccwf_current.testing_tids.num = tids.num;
+		printk(KERN_INFO
+		       "[CHECKER_MONITOR] checker_monitor: MODIFY_TESTING_TID\n");
+		break;
+	}
+	case SET_MAY_RACE_PAIRS: {
+		may_race_pair_list_t user_list;
+		if (copy_from_user(&user_list, (void __user *)arg,
+				   sizeof(user_list))) {
+			return -EFAULT;
+		}
+		if (user_list.num > MAX_RACE_PAIR_NUM) {
+			return -EINVAL;
+		}
+
+		printk(KERN_INFO
+		       "[CHECKER_MONITOR] SET_MAY_RACE_PAIRS received %u pairs\n",
+		       user_list.num);
+		for (uint32_t i = 0; i < user_list.num; ++i) {
+			printk(KERN_INFO "  Pair %u: (%lx, %lx, %lx, %lx)\n", i,
+			       user_list.pairs[i].var_name_1,
+			       user_list.pairs[i].var_name_2,
+			       user_list.pairs[i].call_stack_hash_1,
+			       user_list.pairs[i].call_stack_hash_2);
+		}
+
+		// 保存到全局变量
+		memcpy(&g_may_race_pair_list, &user_list, sizeof(user_list));
+		break;
+	}
+	case GET_MAY_RACE_PAIRS: {
+		if (copy_to_user((void __user *)arg, &g_may_race_pair_list,
+				 sizeof(g_may_race_pair_list))) {
+			return -EFAULT;
+		}
+		printk(KERN_INFO
+		       "[CHECKER_MONITOR] GET_MAY_RACE_PAIRS sent %u pairs\n",
+		       g_may_race_pair_list.num);
+		break;
+	}
 	}
 	return 0;
 }
@@ -85,21 +111,47 @@ static const struct file_operations checker_fops = {
 // /proc文件接口
 static int proc_show_kccwf_stats(struct seq_file *m, void *v)
 {
-	seq_printf(m, "Condition Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&kccwf_statistical_var.time_condition_check_total),
+	seq_printf(
+		m,
+		"Condition Check:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(
+			&kccwf_statistical_var.time_condition_check_total),
 		atomic_long_read(&kccwf_statistical_var.count_condition_check),
-		atomic_long_read(&kccwf_statistical_var.count_condition_check) ? 
-		atomic_long_read(&kccwf_statistical_var.time_condition_check_total) / atomic_long_read(&kccwf_statistical_var.count_condition_check) : 0);
-	seq_printf(m, "Preparing Stage:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(&kccwf_statistical_var.count_condition_check) ?
+			atomic_long_read(&kccwf_statistical_var
+						  .time_condition_check_total) /
+				atomic_long_read(
+					&kccwf_statistical_var
+						 .count_condition_check) :
+			0);
+	seq_printf(
+		m,
+		"Preparing Stage:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
 		atomic_long_read(&kccwf_statistical_var.time_preparing_stage),
 		atomic_long_read(&kccwf_statistical_var.count_preparing_stage),
-		atomic_long_read(&kccwf_statistical_var.count_preparing_stage) ? 
-		atomic_long_read(&kccwf_statistical_var.time_preparing_stage) / atomic_long_read(&kccwf_statistical_var.count_preparing_stage) : 0);
-	seq_printf(m, "Watching Processsing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
-		atomic_long_read(&kccwf_statistical_var.time_watchpoint_processing_total),
-		atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total),
-		atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total) ? 
-		atomic_long_read(&kccwf_statistical_var.time_watchpoint_processing_total) / atomic_long_read(&kccwf_statistical_var.count_watchpoint_processing_total) : 0);
+		atomic_long_read(&kccwf_statistical_var.count_preparing_stage) ?
+			atomic_long_read(
+				&kccwf_statistical_var.time_preparing_stage) /
+				atomic_long_read(
+					&kccwf_statistical_var
+						 .count_preparing_stage) :
+			0);
+	seq_printf(
+		m,
+		"Watching Processsing:\n\tTotal Time: %llu ns\n\tCount: %lu\n\tAvg: %llu ns\n",
+		atomic_long_read(
+			&kccwf_statistical_var.time_watchpoint_processing_total),
+		atomic_long_read(&kccwf_statistical_var
+					  .count_watchpoint_processing_total),
+		atomic_long_read(&kccwf_statistical_var
+					  .count_watchpoint_processing_total) ?
+			atomic_long_read(
+				&kccwf_statistical_var
+					 .time_watchpoint_processing_total) /
+				atomic_long_read(
+					&kccwf_statistical_var
+						 .count_watchpoint_processing_total) :
+			0);
 	return 0;
 }
 
@@ -109,10 +161,10 @@ static int proc_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops proc_fops = {
-    .proc_open = proc_open,       // 改为 proc_open 成员
-    .proc_read = seq_read,        // 改为 proc_read
-    .proc_lseek = seq_lseek,      // 改为 proc_lseek
-    .proc_release = single_release, // 改为 proc_release
+	.proc_open = proc_open, // 改为 proc_open 成员
+	.proc_read = seq_read, // 改为 proc_read
+	.proc_lseek = seq_lseek, // 改为 proc_lseek
+	.proc_release = single_release, // 改为 proc_release
 };
 static int __init checker_init(void)
 {
@@ -183,7 +235,7 @@ static int __init checker_init(void)
 
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module loaded\n");
-	kccwf_access_twbuffer_init();
+
 	proc_create("kccwf_stats", 0, NULL, &proc_fops);
 	return 0;
 }
@@ -203,7 +255,6 @@ static void __exit checker_exit(void)
 	printk(KERN_INFO
 	       "[CHECKER_MONITOR] checker_monitor: Checker module unloaded\n");
 	kccwf_core_exit();
-	kccwf_access_twbuffer_clean();
 }
 
 MODULE_LICENSE("GPL");

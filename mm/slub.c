@@ -2287,10 +2287,10 @@ bool slab_free_hook(struct kmem_cache *s, void *x, bool init,
 	/* Use KCSAN to help debug racy use-after-free. */
 	if (!still_accessible){
 		// printk(KERN_INFO "rec_mem_access\n");
-		if (atomic_read(&kccwf_threads_monitored[current->pid%KCCWF_THREADS_MONITORED]))
-		{
-			kccwf_rec_mem_access(x, 0, 1, 0,s->object_size);
-		}	
+		// if (atomic_read(&kccwf_threads_monitored[current->pid%KCCWF_THREADS_MONITORED]) && kccwf_current.kccwf_mode == KCCWF_MONITOR_MODE)
+		// {
+		// 	kccwf_rec_mem_access(x, 0, 1, 0,s->object_size);
+		// }	
 		__kcsan_check_access(x, s->object_size,
 			KCSAN_ACCESS_WRITE | KCSAN_ACCESS_ASSERT);
 	}

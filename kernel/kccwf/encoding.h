@@ -6,6 +6,19 @@
 #include <linux/mm.h>
 #include <linux/kccwf.h>
 
+#define KCCWF_NUM_WATCHPOINTS 40960
+#define KCCWF_CHECK_ADJACENT 15
+#define NUM_SLOTS (1 + 2*KCCWF_CHECK_ADJACENT)
+#define SLOT_IDX(slot, i) (slot + ((i + KCCWF_CHECK_ADJACENT) % NUM_SLOTS))
+#define SLOT_IDX_FAST(slot, i) (slot + i)
+#define REAL_NUM_WATCHPOINTS (KCCWF_NUM_WATCHPOINTS + NUM_SLOTS - 1)
+
+// [FIX ME] replace with a hash function that can be more efficient and able to avoid hash collisions
+static __always_inline int watchpoint_slot(unsigned long addr) {
+    const unsigned long A = 2654435761U; // 黄金比例素数 (2^32 / φ)
+    return (addr * A) % KCCWF_NUM_WATCHPOINTS;
+}
+
 // 调整宏定义：移除 is_write 相关掩码，地址掩码扩展至 48 位
 #define WATCHPOINT_SIZE_BITS   16
 #define MAX_ENCODABLE_SIZE     0xFFFF

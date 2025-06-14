@@ -1441,6 +1441,7 @@ struct task_struct {
 #endif
 	int kccwf_disable_count;
 	int kccwf_free_enable_count;
+	int kccwf_bbs_state;
 #ifdef CONFIG_KCSAN
 	struct kcsan_ctx		kcsan_ctx;
 #ifdef CONFIG_TRACE_IRQFLAGS

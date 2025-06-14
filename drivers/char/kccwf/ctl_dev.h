@@ -1,5 +1,5 @@
-#ifndef CHECKER_H
-#define CHECKER_H
+#ifndef KCCWF_CTL_DEV_H
+#define KCCWF_CTL_DEV_H
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -20,15 +20,18 @@
 #include <linux/kccwf.h>
 
 
+
 #define DEV_MAGIC 'c'
 #define TURN_OFF_KCCWF _IO(DEV_MAGIC, 0)
 #define START_MONITOR _IO(DEV_MAGIC, 1)
 #define START_LOG_PHASE _IO(DEV_MAGIC, 2)
 #define START_CHECK_SYNC_PHASE _IO(DEV_MAGIC, 3)
 #define START_VALIDATE_PHASE _IO(DEV_MAGIC, 4)
-#define PRINT_MAYRACEPAIR _IO(DEV_MAGIC, 5)
+#define MODIFY_TESTING_TID _IOW(DEV_MAGIC, 5, kccwf_testing_tids_t)
+#define SET_MAY_RACE_PAIRS _IOW(DEV_MAGIC, 6, may_race_pair_list)
+#define GET_MAY_RACE_PAIRS _IOR(DEV_MAGIC, 6, may_race_pair_list)
 
-#define DEVICE_NAME "checker_monitor"
+#define DEVICE_NAME "kccwf_ctl_dev"
 #define CLASS_NAME "checker_class"
 
 static struct class *checker_class = NULL; // class pointer
@@ -42,6 +45,7 @@ typedef struct mon_dev_checker {
     struct cdev cdev;
 } mon_dev_checker_t;
 
+
 static mon_dev_checker_t *checker_dev;
 
-#endif // CHECKER_H
+#endif // KCCWF_CTL_EQP_H

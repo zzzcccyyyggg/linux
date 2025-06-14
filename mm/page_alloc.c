@@ -1056,11 +1056,11 @@ __always_inline bool free_pages_prepare(struct page *page,
 	trace_mm_page_free(page, order);
 	kmsan_free_page(page, order);
 	/* kccwf hook start */
-	if (atomic_read(&kccwf_threads_monitored[current->pid%KCCWF_THREADS_MONITORED]))
-	{
-		void *addr = page_address(page);
-		kccwf_rec_mem_access(addr, 0, 1, 0, PAGE_SIZE << order);
-	}
+	// if (atomic_read(&kccwf_threads_monitored[current->pid%KCCWF_THREADS_MONITORED]) && kccwf_current.kccwf_mode == KCCWF_MONITOR_MODE)
+	// {
+	// 	void *addr = page_address(page);
+	// 	kccwf_rec_mem_access(addr, 0, 1, 0, PAGE_SIZE << order);
+	// }
 
 	/* kccwf hook end */
 	if (memcg_kmem_online() && PageMemcgKmem(page))
