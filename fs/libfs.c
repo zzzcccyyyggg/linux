@@ -496,7 +496,7 @@ offset_dir_lookup(struct dentry *parent, loff_t offset)
 		found = find_positive_dentry(parent, NULL, false);
 	else {
 		rcu_read_lock();
-		child = mas_find(&mas, DIR_OFFSET_MAX);
+		child = mas_find_rev(&mas, DIR_OFFSET_MIN);
 		found = find_positive_dentry(parent, child, false);
 		rcu_read_unlock();
 	}
@@ -583,7 +583,7 @@ const struct file_operations simple_offset_dir_operations = {
 	.fsync		= noop_fsync,
 };
 
-static struct dentry *find_next_child(struct dentry *parent, struct dentry *prev)
+struct dentry *find_next_child(struct dentry *parent, struct dentry *prev)
 {
 	struct dentry *child = NULL, *d;
 
@@ -603,6 +603,7 @@ static struct dentry *find_next_child(struct dentry *parent, struct dentry *prev
 	dput(prev);
 	return child;
 }
+EXPORT_SYMBOL(find_next_child);
 
 void simple_recursive_removal(struct dentry *dentry,
                               void (*callback)(struct dentry *))
@@ -1647,10 +1648,16 @@ struct inode *alloc_anon_inode(struct super_block *s)
 	 * that it already _is_ on the dirty list.
 	 */
 	inode->i_state = I_DIRTY;
-	inode->i_mode = S_IRUSR | S_IWUSR;
+	/*
+	 * Historically anonymous inodes didn't have a type at all and
+	 * userspace has come to rely on this. Internally they're just
+	 * regular files but S_IFREG is masked off when reporting
+	 * information to userspace.
+	 */
+	inode->i_mode = S_IFREG | S_IRUSR | S_IWUSR;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
-	inode->i_flags |= S_PRIVATE;
+	inode->i_flags |= S_PRIVATE | S_ANON_INODE;
 	simple_inode_init_ts(inode);
 	return inode;
 }
@@ -2113,7 +2120,7 @@ struct timespec64 simple_inode_init_ts(struct inode *inode)
 }
 EXPORT_SYMBOL(simple_inode_init_ts);
 
-static inline struct dentry *get_stashed_dentry(struct dentry **stashed)
+struct dentry *stashed_dentry_get(struct dentry **stashed)
 {
 	struct dentry *dentry;
 
@@ -2215,7 +2222,7 @@ int path_from_stashed(struct dentry **stashed, struct vfsmount *mnt, void *data,
 	const struct stashed_operations *sops = mnt->mnt_sb->s_fs_info;
 
 	/* See if dentry can be reused. */
-	path->dentry = get_stashed_dentry(stashed);
+	path->dentry = stashed_dentry_get(stashed);
 	if (path->dentry) {
 		sops->put_data(data);
 		goto out_path;

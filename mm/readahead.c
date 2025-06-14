@@ -128,7 +128,6 @@
 #include <linux/blk-cgroup.h>
 #include <linux/fadvise.h>
 #include <linux/sched/mm.h>
-#include <linux/fsnotify.h>
 
 #include "internal.h"
 
@@ -559,15 +558,6 @@ void page_cache_sync_ra(struct readahead_control *ractl,
 	pgoff_t prev_index, miss;
 
 	/*
-	 * If we have pre-content watches we need to disable readahead to make
-	 * sure that we don't find 0 filled pages in cache that we never emitted
-	 * events for. Filesystems supporting HSM must make sure to not call
-	 * this function with ractl->file unset for files handled by HSM.
-	 */
-	if (ractl->file && unlikely(FMODE_FSNOTIFY_HSM(ractl->file->f_mode)))
-		return;
-
-	/*
 	 * Even if readahead is disabled, issue this request as readahead
 	 * as we'll need it to satisfy the requested range. The forced
 	 * readahead will do the right thing and limit the read to just the
@@ -645,10 +635,6 @@ void page_cache_async_ra(struct readahead_control *ractl,
 	if (!ra->ra_pages)
 		return;
 
-	/* See the comment in page_cache_sync_ra. */
-	if (ractl->file && unlikely(FMODE_FSNOTIFY_HSM(ractl->file->f_mode)))
-		return;
-
 	/*
 	 * Same bit is used for PG_readahead and PG_reclaim.
 	 */
@@ -704,9 +690,15 @@ EXPORT_SYMBOL_GPL(page_cache_async_ra);
 
 ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 {
-	CLASS(fd, f)(fd);
+	struct file *file;
+	const struct inode *inode;
 
-	if (fd_empty(f) || !(fd_file(f)->f_mode & FMODE_READ))
+	CLASS(fd, f)(fd);
+	if (fd_empty(f))
+		return -EBADF;
+
+	file = fd_file(f);
+	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;
 
 	/*
@@ -714,9 +706,15 @@ ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 	 * that can execute readahead. If readahead is not possible
 	 * on this file, then we must return -EINVAL.
 	 */
-	if (!fd_file(f)->f_mapping || !fd_file(f)->f_mapping->a_ops ||
-	    (!S_ISREG(file_inode(fd_file(f))->i_mode) &&
-	    !S_ISBLK(file_inode(fd_file(f))->i_mode)))
+	if (!file->f_mapping)
+		return -EINVAL;
+	if (!file->f_mapping->a_ops)
+		return -EINVAL;
+
+	inode = file_inode(file);
+	if (!S_ISREG(inode->i_mode) && !S_ISBLK(inode->i_mode))
+		return -EINVAL;
+	if (IS_ANON_FILE(inode))
 		return -EINVAL;
 
 	return vfs_fadvise(fd_file(f), offset, count, POSIX_FADV_WILLNEED);
