@@ -43,6 +43,17 @@ static inline u64 *ctxt_mdscr_el1(struct kvm_cpu_context *ctxt)
 	return &ctxt_sys_reg(ctxt, MDSCR_EL1);
 }
 
+static inline u64 ctxt_midr_el1(struct kvm_cpu_context *ctxt)
+{
+	struct kvm *kvm = kern_hyp_va(ctxt_to_vcpu(ctxt)->kvm);
+
+	if (!(ctxt_is_guest(ctxt) &&
+	      test_bit(KVM_ARCH_FLAG_WRITABLE_IMP_ID_REGS, &kvm->arch.flags)))
+		return read_cpuid_id();
+
+	return kvm_read_vm_id_reg(kvm, SYS_MIDR_EL1);
+}
+
 static inline void __sysreg_save_common_state(struct kvm_cpu_context *ctxt)
 {
 	*ctxt_mdscr_el1(ctxt)	= read_sysreg(mdscr_el1);
@@ -168,8 +179,9 @@ static inline void __sysreg_restore_user_state(struct kvm_cpu_context *ctxt)
 }
 
 static inline void __sysreg_restore_el1_state(struct kvm_cpu_context *ctxt,
-					      u64 mpidr)
+					      u64 midr, u64 mpidr)
 {
+	write_sysreg(midr,				vpidr_el2);
 	write_sysreg(mpidr,				vmpidr_el2);
 
 	if (has_vhe() ||
@@ -295,11 +307,11 @@ static inline void __sysreg32_save_state(struct kvm_vcpu *vcpu)
 	vcpu->arch.ctxt.spsr_irq = read_sysreg(spsr_irq);
 	vcpu->arch.ctxt.spsr_fiq = read_sysreg(spsr_fiq);
 
-	__vcpu_sys_reg(vcpu, DACR32_EL2) = read_sysreg(dacr32_el2);
-	__vcpu_sys_reg(vcpu, IFSR32_EL2) = read_sysreg(ifsr32_el2);
+	__vcpu_assign_sys_reg(vcpu, DACR32_EL2, read_sysreg(dacr32_el2));
+	__vcpu_assign_sys_reg(vcpu, IFSR32_EL2, read_sysreg(ifsr32_el2));
 
 	if (has_vhe() || kvm_debug_regs_in_use(vcpu))
-		__vcpu_sys_reg(vcpu, DBGVCR32_EL2) = read_sysreg(dbgvcr32_el2);
+		__vcpu_assign_sys_reg(vcpu, DBGVCR32_EL2, read_sysreg(dbgvcr32_el2));
 }
 
 static inline void __sysreg32_restore_state(struct kvm_vcpu *vcpu)
